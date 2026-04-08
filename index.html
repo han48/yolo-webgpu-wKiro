@@ -1,0 +1,1343 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>YOLO Image Detection</title>
+  <style>
+    *, *::before, *::after {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: system-ui, -apple-system, sans-serif;
+      background: #f0f2f5;
+      color: #1a1a2e;
+      min-height: 100vh;
+      padding: 24px 16px;
+    }
+
+    h1 {
+      text-align: center;
+      font-size: 1.75rem;
+      font-weight: 700;
+      margin-bottom: 24px;
+      color: #1a1a2e;
+    }
+
+    .container {
+      max-width: 1200px;
+      margin: 0 auto;
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+    }
+
+    /* Status */
+    #status {
+      text-align: center;
+      font-size: 0.95rem;
+      padding: 10px 16px;
+      border-radius: 8px;
+      background: #e8f4fd;
+      color: #1565c0;
+      min-height: 40px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: background 0.2s, color 0.2s;
+    }
+
+    #status.loading {
+      background: #e8f4fd;
+      color: #1565c0;
+    }
+
+    #status.error {
+      background: #fdecea;
+      color: #c62828;
+    }
+
+    #status.ready {
+      background: #e8f5e9;
+      color: #2e7d32;
+    }
+
+    #status.processing {
+      background: #fff8e1;
+      color: #f57f17;
+    }
+
+    /* Input area */
+    .input-area {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 16px;
+      background: #fff;
+      border-radius: 12px;
+      padding: 24px;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+    }
+
+    /* Source tabs */
+    .source-tabs {
+      display: flex;
+      gap: 8px;
+    }
+
+    .tab-btn {
+      padding: 8px 20px;
+      border: 2px solid #90caf9;
+      border-radius: 8px;
+      background: #fff;
+      color: #1565c0;
+      font-size: 0.9rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.2s, color 0.2s;
+    }
+
+    .tab-btn.active {
+      background: #1565c0;
+      color: #fff;
+      border-color: #1565c0;
+    }
+
+    .model-selector {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      width: 100%;
+      max-width: 400px;
+    }
+
+    .model-selector label {
+      font-size: 0.9rem;
+      font-weight: 600;
+      color: #555;
+      white-space: nowrap;
+    }
+
+    #model-select {
+      flex: 1;
+      padding: 8px 12px;
+      border: 1px solid #90caf9;
+      border-radius: 8px;
+      font-size: 0.95rem;
+      color: #1a1a2e;
+      background: #fff;
+      cursor: pointer;
+    }
+
+    #model-select:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    .file-label {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      cursor: pointer;
+      padding: 10px 20px;
+      border: 2px dashed #90caf9;
+      border-radius: 8px;
+      color: #1565c0;
+      font-size: 0.95rem;
+      transition: border-color 0.2s, background 0.2s;
+    }
+
+    .file-label:hover {
+      border-color: #1565c0;
+      background: #e8f4fd;
+    }
+
+    #file-input {
+      display: none;
+    }
+
+    #detect-btn {
+      padding: 10px 32px;
+      font-size: 1rem;
+      font-weight: 600;
+      background: #1565c0;
+      color: #fff;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: background 0.2s, opacity 0.2s;
+    }
+
+    #detect-btn:hover:not(:disabled) {
+      background: #0d47a1;
+    }
+
+    #detect-btn:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    /* Webcam */
+    #webcam-panel { display: none; flex-direction: column; align-items: center; gap: 10px; width: 100%; }
+    #webcam-panel.active { display: flex; }
+    #image-panel { display: flex; flex-direction: column; align-items: center; gap: 10px; }
+    #image-panel.hidden { display: none; }
+
+    #webcam-video {
+      max-width: 100%;
+      border-radius: 8px;
+      border: 1px solid #e0e0e0;
+      background: #111;
+      display: none;
+    }
+
+    .webcam-controls {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      justify-content: center;
+    }
+
+    .btn-secondary {
+      padding: 8px 20px;
+      font-size: 0.9rem;
+      font-weight: 600;
+      background: #fff;
+      color: #1565c0;
+      border: 2px solid #1565c0;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+
+    .btn-secondary:hover:not(:disabled) { background: #e8f4fd; }
+    .btn-secondary:disabled { opacity: 0.5; cursor: not-allowed; }
+
+    .btn-danger {
+      padding: 8px 20px;
+      font-size: 0.9rem;
+      font-weight: 600;
+      background: #fff;
+      color: #c62828;
+      border: 2px solid #c62828;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+
+    .btn-danger:hover:not(:disabled) { background: #fdecea; }
+
+    /* Timing info */
+    #timing-bar {
+      display: none;
+      align-items: center;
+      gap: 16px;
+      background: #fff;
+      border-radius: 12px;
+      padding: 10px 20px;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+      font-size: 0.88rem;
+      color: #555;
+      flex-wrap: wrap;
+    }
+
+    #timing-bar.visible { display: flex; }
+
+    .timing-item { display: flex; align-items: center; gap: 6px; }
+    .timing-label { color: #888; }
+    .timing-value { font-weight: 700; color: #1565c0; }
+
+    /* Canvas area */
+    .canvas-area {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+    }
+
+    @media (max-width: 700px) {
+      .canvas-area {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    .canvas-wrapper {
+      background: #fff;
+      border-radius: 12px;
+      padding: 16px;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .canvas-wrapper h2 {
+      font-size: 1rem;
+      font-weight: 600;
+      color: #555;
+    }
+
+    canvas {
+      max-width: 100%;
+      border-radius: 6px;
+      background: #f5f5f5;
+      border: 1px solid #e0e0e0;
+      display: block;
+    }
+
+    /* Canvas wrapper — position:relative để magnifier tính toán offset */
+    .canvas-wrapper {
+      position: relative;
+    }
+
+    /* Magnifier lens */
+    #magnifier {
+      position: fixed;
+      width: 180px;
+      height: 180px;
+      border-radius: 50%;
+      border: 3px solid #1565c0;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.35);
+      pointer-events: none;
+      display: none;
+      overflow: hidden;
+      z-index: 9999;
+      background: #111;
+    }
+
+    #magnifier canvas {
+      position: absolute;
+      top: 0;
+      left: 0;
+      border: none;
+      border-radius: 0;
+      background: transparent;
+      max-width: none;
+    }
+
+    /* Zoom control bar */
+    #zoom-bar {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      background: #fff;
+      border-radius: 12px;
+      padding: 12px 20px;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+      font-size: 0.9rem;
+      color: #555;
+    }
+
+    #zoom-bar label {
+      font-weight: 600;
+      white-space: nowrap;
+    }
+
+    #zoom-slider {
+      flex: 1;
+      max-width: 200px;
+      accent-color: #1565c0;
+      cursor: pointer;
+    }
+
+    #zoom-value {
+      font-weight: 700;
+      color: #1565c0;
+      min-width: 28px;
+      text-align: right;
+    }
+
+    /* Stats table */
+    #table-section {
+      background: #fff;
+      border-radius: 12px;
+      padding: 20px;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+      display: none;
+    }
+
+    #table-section h2 {
+      font-size: 1rem;
+      font-weight: 600;
+      margin-bottom: 12px;
+      color: #555;
+    }
+
+    #detection-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.9rem;
+    }
+
+    #detection-table thead tr {
+      background: #e3f2fd;
+    }
+
+    #detection-table th,
+    #detection-table td {
+      padding: 10px 14px;
+      text-align: left;
+      border-bottom: 1px solid #e0e0e0;
+    }
+
+    #detection-table th {
+      font-weight: 600;
+      color: #1565c0;
+    }
+
+    #detection-table tbody tr:hover {
+      background: #f5f5f5;
+    }
+
+    #detection-table tbody tr:last-child td {
+      border-bottom: none;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>YOLO Image Detection</h1>
+
+    <div id="status">Đang khởi tạo...</div>
+
+    <div class="input-area">
+      <div class="model-selector">
+        <label for="model-select">Model:</label>
+        <select id="model-select" disabled></select>
+      </div>
+
+      <!-- Source tabs -->
+      <div class="source-tabs">
+        <button class="tab-btn active" id="tab-image">🖼 Ảnh</button>
+        <button class="tab-btn" id="tab-webcam">📷 Webcam</button>
+      </div>
+
+      <!-- Image panel -->
+      <div id="image-panel">
+        <label class="file-label" for="file-input">
+          📁 Chọn ảnh (PNG, JPG, WEBP)
+        </label>
+        <input type="file" id="file-input" accept="image/png,image/jpeg,image/webp" />
+        <button id="detect-btn" disabled>Detect</button>
+      </div>
+
+      <!-- Webcam panel -->
+      <div id="webcam-panel">
+        <video id="webcam-video" autoplay playsinline muted width="640" height="480"></video>
+        <div class="webcam-controls">
+          <button class="btn-secondary" id="webcam-start-btn">▶ Bật Webcam</button>
+          <button class="btn-secondary" id="webcam-detect-btn" disabled>⏯ Bắt đầu nhận diện</button>
+          <button class="btn-secondary" id="webcam-capture-btn" disabled>📋 Capture → Clipboard</button>
+          <button class="btn-danger" id="webcam-stop-btn" disabled>■ Dừng</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="canvas-area">
+      <div class="canvas-wrapper">
+        <h2>Ảnh gốc</h2>
+        <canvas id="original-canvas" width="640" height="480"></canvas>
+      </div>
+      <div class="canvas-wrapper">
+        <h2>Kết quả nhận diện</h2>
+        <canvas id="result-canvas" width="640" height="480"></canvas>
+      </div>
+    </div>
+
+    <!-- Timing info -->
+    <div id="timing-bar">
+      <div class="timing-item">
+        <span class="timing-label">⏱ Thời gian nhận diện:</span>
+        <span class="timing-value" id="timing-inference">—</span>
+      </div>
+      <div class="timing-item" id="fps-item" style="display:none">
+        <span class="timing-label">🎞 FPS:</span>
+        <span class="timing-value" id="timing-fps">—</span>
+      </div>
+    </div>
+
+    <!-- Zoom control -->
+    <div id="zoom-bar">
+      <label for="zoom-slider">🔍 Kính lúp:</label>
+      <input type="range" id="zoom-slider" min="1" max="5" step="0.5" value="2" />
+      <span id="zoom-value">×2</span>
+      <span style="color:#bbb;margin:0 4px">|</span>
+      <label for="size-slider" style="white-space:nowrap">Kích thước:</label>
+      <input type="range" id="size-slider" min="100" max="300" step="10" value="180" />
+      <span id="size-value">180px</span>
+    </div>
+
+    <!-- Magnifier lens (follows cursor) -->
+    <div id="magnifier">
+      <canvas id="magnifier-canvas" width="180" height="180"></canvas>
+    </div>
+
+    <div id="table-section">
+      <h2>Thống kê kết quả</h2>
+      <table id="detection-table">
+        <thead>
+          <tr>
+            <th>Tên Class</th>
+            <th>Số Lượng</th>
+            <th>Confidence Trung Bình</th>
+          </tr>
+        </thead>
+        <tbody id="table-body"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- ONNX Runtime Web via CDN -->
+  <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/ort.min.js"></script>
+  <!-- App logic -->
+  <script>
+    // ── State ────────────────────────────────────────────────────────────────
+    let session = null;
+    let classes = [];
+
+    // ── UIController ─────────────────────────────────────────────────────────
+    /**
+     * Update the #status element.
+     * @param {'loading'|'ready'|'processing'|'error'} state
+     * @param {string} [message]
+     */
+    function setStatus(state, message) {
+      const el = document.getElementById('status');
+      el.className = state;
+      const defaults = {
+        loading:    'Đang tải...',
+        ready:      'Sẵn sàng',
+        processing: 'Đang xử lý...',
+        error:      'Lỗi',
+      };
+      el.textContent = message ?? defaults[state] ?? '';
+    }
+
+    /**
+     * Clear the result canvas and hide the stats table.
+     */
+    function clearResults() {
+      const canvas = document.getElementById('result-canvas');
+      canvas.getContext('2d').clearRect(0, 0, canvas.width, canvas.height);
+
+      const tableSection = document.getElementById('table-section');
+      tableSection.style.display = 'none';
+
+      document.getElementById('table-body').innerHTML = '';
+    }
+
+    // ── ModelLoader ───────────────────────────────────────────────────────────
+    /**
+     * Load the ONNX model from the given path.
+     * @param {string} modelPath
+     * @returns {Promise<ort.InferenceSession>}
+     */
+    async function loadModel(modelPath) {
+      return await ort.InferenceSession.create(modelPath);
+    }
+
+    /**
+     * Fetch and parse the class list (one class name per line).
+     * @param {string} classesPath
+     * @returns {Promise<string[]>}
+     */
+    async function loadClasses(classesPath) {
+      const response = await fetch(classesPath);
+      if (!response.ok) {
+        throw new Error(`Không thể tải classes: ${response.status} ${response.statusText}`);
+      }
+      const text = await response.text();
+      return text.split('\n').map(line => line.trim()).filter(line => line.length > 0);
+    }
+
+    // ── ModelRegistry ─────────────────────────────────────────────────────────
+    /**
+     * Fetch and parse models/registry.json.
+     * @returns {Promise<Array<{id: string, name: string, modelPath: string, classesPath: string}>>}
+     */
+    async function loadRegistry() {
+      const response = await fetch('models/registry.json');
+      if (!response.ok) throw new Error(`Không thể tải registry: ${response.status}`);
+      const data = await response.json();
+      return data.models;
+    }
+
+    /**
+     * Populate the model <select> dropdown.
+     * @param {Array<{id: string, name: string}>} models
+     */
+    function populateModelDropdown(models) {
+      const select = document.getElementById('model-select');
+      select.innerHTML = '';
+      models.forEach((m, i) => {
+        const opt = document.createElement('option');
+        opt.value = i;
+        opt.textContent = m.name;
+        select.appendChild(opt);
+      });
+    }
+
+    // ── State (image) ─────────────────────────────────────────────────────────
+    let currentImage = null;   // HTMLImageElement of the currently selected image
+    let registry = [];         // ModelEntry[]
+
+    // ── File Input Handler ────────────────────────────────────────────────────
+    const ACCEPTED_TYPES = ['image/png', 'image/jpeg', 'image/webp'];
+    const MAX_CANVAS_SIZE = 640;
+
+    document.getElementById('file-input').addEventListener('change', function (e) {
+      const file = e.target.files[0];
+      if (!file) return;
+
+      if (!ACCEPTED_TYPES.includes(file.type)) {
+        setStatus('error', 'Định dạng không hợp lệ. Chỉ chấp nhận PNG, JPG, WEBP.');
+        return;
+      }
+
+      clearResults();
+
+      const reader = new FileReader();
+      reader.onload = function (readerEvent) {
+        const img = new Image();
+        img.onload = function () {
+          currentImage = img;
+
+          const canvas = document.getElementById('original-canvas');
+          // Fit within MAX_CANVAS_SIZE while preserving aspect ratio
+          let drawW = img.naturalWidth;
+          let drawH = img.naturalHeight;
+          if (drawW > MAX_CANVAS_SIZE || drawH > MAX_CANVAS_SIZE) {
+            const ratio = Math.min(MAX_CANVAS_SIZE / drawW, MAX_CANVAS_SIZE / drawH);
+            drawW = Math.round(drawW * ratio);
+            drawH = Math.round(drawH * ratio);
+          }
+          canvas.width  = drawW;
+          canvas.height = drawH;
+          canvas.getContext('2d').drawImage(img, 0, 0, drawW, drawH);
+        };
+        img.src = readerEvent.target.result;
+      };
+      reader.readAsDataURL(file);
+    });
+
+    // ── ImagePreprocessor ─────────────────────────────────────────────────────
+    const MODEL_INPUT_SIZE = 640;
+    const PAD_VALUE = 128 / 255.0;  // gray padding normalized
+
+    /**
+     * Resize and letterbox-pad an image to 640×640, returning a Float32Array
+     * tensor in CHW format (shape [1, 3, 640, 640]) with values normalized to
+     * [0, 1], plus the scale and padding info needed to map detections back to
+     * the original image space.
+     *
+     * @param {HTMLImageElement} imageElement
+     * @returns {{ tensor: Float32Array, scaleX: number, scaleY: number, padX: number, padY: number }}
+     */
+    function preprocessImage(imageElement) {
+      const origW = imageElement.naturalWidth;
+      const origH = imageElement.naturalHeight;
+
+      // Compute uniform scale so the image fits within 640×640
+      const scale = Math.min(MODEL_INPUT_SIZE / origW, MODEL_INPUT_SIZE / origH);
+      const scaledW = Math.min(Math.max(1, Math.round(origW * scale)), MODEL_INPUT_SIZE);
+      const scaledH = Math.min(Math.max(1, Math.round(origH * scale)), MODEL_INPUT_SIZE);
+
+      // Padding to center the scaled image within the 640×640 canvas
+      const padX = Math.floor((MODEL_INPUT_SIZE - scaledW) / 2);
+      const padY = Math.floor((MODEL_INPUT_SIZE - scaledH) / 2);
+
+      // Draw onto an offscreen canvas
+      const canvas = new OffscreenCanvas(MODEL_INPUT_SIZE, MODEL_INPUT_SIZE);
+      const ctx = canvas.getContext('2d');
+
+      // Fill with gray padding (128, 128, 128)
+      ctx.fillStyle = `rgb(128, 128, 128)`;
+      ctx.fillRect(0, 0, MODEL_INPUT_SIZE, MODEL_INPUT_SIZE);
+
+      // Draw the scaled image centered
+      ctx.drawImage(imageElement, padX, padY, scaledW, scaledH);
+
+      // Read pixel data (RGBA, HWC layout)
+      const imageData = ctx.getImageData(0, 0, MODEL_INPUT_SIZE, MODEL_INPUT_SIZE);
+      const pixels = imageData.data;  // Uint8ClampedArray, length = 640*640*4
+
+      // Build CHW Float32Array: [R flat, G flat, B flat]
+      const numPixels = MODEL_INPUT_SIZE * MODEL_INPUT_SIZE;
+      const tensor = new Float32Array(3 * numPixels);
+
+      for (let i = 0; i < numPixels; i++) {
+        tensor[i]                  = pixels[i * 4]     / 255.0;  // R
+        tensor[numPixels + i]      = pixels[i * 4 + 1] / 255.0;  // G
+        tensor[2 * numPixels + i]  = pixels[i * 4 + 2] / 255.0;  // B
+      }
+
+      return {
+        tensor,
+        scaleX: scaledW / origW,
+        scaleY: scaledH / origH,
+        padX,
+        padY,
+      };
+    }
+
+    // ── NMS ──────────────────────────────────────────────────────────────────
+
+    /**
+     * Compute Intersection over Union (IoU) between two bounding boxes.
+     * Boxes are in { x, y, width, height } format where (x, y) is top-left.
+     *
+     * @param {{ x: number, y: number, width: number, height: number }} boxA
+     * @param {{ x: number, y: number, width: number, height: number }} boxB
+     * @returns {number} IoU value in [0, 1]
+     */
+    function computeIoU(boxA, boxB) {
+      const xA1 = boxA.x, yA1 = boxA.y, xA2 = boxA.x + boxA.width,  yA2 = boxA.y + boxA.height;
+      const xB1 = boxB.x, yB1 = boxB.y, xB2 = boxB.x + boxB.width,  yB2 = boxB.y + boxB.height;
+
+      const interX1 = Math.max(xA1, xB1);
+      const interY1 = Math.max(yA1, yB1);
+      const interX2 = Math.min(xA2, xB2);
+      const interY2 = Math.min(yA2, yB2);
+
+      const interW = Math.max(0, interX2 - interX1);
+      const interH = Math.max(0, interY2 - interY1);
+      const intersection = interW * interH;
+
+      if (intersection === 0) return 0;
+
+      const areaA = boxA.width * boxA.height;
+      const areaB = boxB.width * boxB.height;
+      const union = areaA + areaB - intersection;
+
+      return union <= 0 ? 0 : intersection / union;
+    }
+
+    /**
+     * Apply Non-Maximum Suppression to a list of detections.
+     * Detections are sorted by confidence descending; boxes of the same class
+     * with IoU > iouThreshold are suppressed, keeping the highest-confidence box.
+     *
+     * @param {Array<{ classIndex: number, className: string, confidence: number, box: { x: number, y: number, width: number, height: number } }>} detections
+     * @param {number} iouThreshold  — typically 0.45
+     * @returns {Array} filtered detections
+     */
+    function applyNMS(detections, iouThreshold) {
+      // Sort by confidence descending
+      const sorted = detections.slice().sort((a, b) => b.confidence - a.confidence);
+
+      const kept = [];
+      const suppressed = new Uint8Array(sorted.length);
+
+      for (let i = 0; i < sorted.length; i++) {
+        if (suppressed[i]) continue;
+        kept.push(sorted[i]);
+        for (let j = i + 1; j < sorted.length; j++) {
+          if (suppressed[j]) continue;
+          if (sorted[i].classIndex !== sorted[j].classIndex) continue;
+          if (computeIoU(sorted[i].box, sorted[j].box) > iouThreshold) {
+            suppressed[j] = 1;
+          }
+        }
+      }
+
+      return kept;
+    }
+
+    /**
+     * Filter detections by confidence threshold.
+     * Only detections with confidence >= threshold are kept.
+     *
+     * @param {Array<{ classIndex: number, className: string, confidence: number, box: { x: number, y: number, width: number, height: number } }>} detections
+     * @param {number} [threshold=0.25]
+     * @returns {Array} filtered detections
+     */
+    function filterByConfidence(detections, threshold = 0.25) {
+      return detections.filter(d => d.confidence >= threshold);
+    }
+
+    // ── Detector ─────────────────────────────────────────────────────────────
+
+    /**
+     * Parse the raw YOLO output tensor of shape [1, 14, 8400].
+     * For each of the 8400 anchors, extracts cx, cy, w, h and 10 class scores,
+     * then computes confidence = max(classScores) and classIndex = argmax(classScores).
+     * Returns raw detections (before confidence filtering and NMS) with boxes
+     * expressed in 640×640 space.
+     *
+     * @param {Float32Array} outputData  — flat array of length 14 * 8400
+     * @param {string[]} classes         — array of class name strings
+     * @returns {Array<{ classIndex: number, className: string, confidence: number, box: { x: number, y: number, width: number, height: number } }>}
+     */
+    function parseOutputTensor(outputData, classes) {
+      const NUM_ANCHORS = 8400;
+      const detections = [];
+
+      for (let i = 0; i < NUM_ANCHORS; i++) {
+        const cx = outputData[0 * NUM_ANCHORS + i];
+        const cy = outputData[1 * NUM_ANCHORS + i];
+        const w  = outputData[2 * NUM_ANCHORS + i];
+        const h  = outputData[3 * NUM_ANCHORS + i];
+
+        let confidence = -Infinity;
+        let classIndex = 0;
+
+        for (let c = 0; c < classes.length; c++) {
+          const score = outputData[(4 + c) * NUM_ANCHORS + i];
+          if (score > confidence) {
+            confidence = score;
+            classIndex = c;
+          }
+        }
+
+        detections.push({
+          classIndex,
+          className: classes[classIndex],
+          confidence,
+          box: {
+            x: cx - w / 2,
+            y: cy - h / 2,
+            width: w,
+            height: h,
+          },
+        });
+      }
+
+      return detections;
+    }
+
+    /**
+     * Scale bounding box coordinates from 640×640 model space back to original
+     * image space, accounting for letterbox padding.
+     *
+     * @param {Array<{ classIndex: number, className: string, confidence: number, box: { x: number, y: number, width: number, height: number } }>} detections
+     * @param {number} scaleX  — scaledW / origW
+     * @param {number} scaleY  — scaledH / origH
+     * @param {number} padX    — horizontal padding (px in 640 space)
+     * @param {number} padY    — vertical padding (px in 640 space)
+     * @returns {Array} new array of detections with boxes in original image space
+     */
+    function scaleDetections(detections, scaleX, scaleY, padX, padY) {
+      return detections.map(det => {
+        const { x, y, width, height } = det.box;
+        return {
+          ...det,
+          box: {
+            x:      Math.max(0, (x - padX) / scaleX),
+            y:      Math.max(0, (y - padY) / scaleY),
+            width:  width  / scaleX,
+            height: height / scaleY,
+          },
+        };
+      });
+    }
+
+    /**
+     * Run full detection pipeline: preprocess result → inference → parse → filter → NMS → scale.
+     *
+     * @param {ort.InferenceSession} session
+     * @param {{ tensor: Float32Array, scaleX: number, scaleY: number, padX: number, padY: number }} preprocessResult
+     * @param {string[]} classes
+     * @param {number} confidenceThreshold  — e.g. 0.25
+     * @param {number} iouThreshold         — e.g. 0.45
+     * @returns {Promise<Array<{ classIndex: number, className: string, confidence: number, box: { x: number, y: number, width: number, height: number } }>>}
+     */
+    async function runDetection(session, preprocessResult, classes, confidenceThreshold, iouThreshold) {
+      const { tensor, scaleX, scaleY, padX, padY } = preprocessResult;
+
+      // 1. Create ORT tensor from Float32Array with shape [1, 3, 640, 640]
+      const ortTensor = new ort.Tensor('float32', tensor, [1, 3, 640, 640]);
+
+      // 2. Run inference
+      const results = await session.run({ images: ortTensor });
+
+      // 3. Get output data
+      const outputData = results[Object.keys(results)[0]].data;
+
+      // 4. Parse raw output tensor
+      const rawDetections = parseOutputTensor(outputData, classes);
+
+      // 5. Filter by confidence
+      const filtered = filterByConfidence(rawDetections, confidenceThreshold);
+
+      // 6. Apply NMS
+      const nmsResult = applyNMS(filtered, iouThreshold);
+
+      // 7. Scale boxes back to original image space
+      return scaleDetections(nmsResult, scaleX, scaleY, padX, padY);
+    }
+
+    // ── Renderer ─────────────────────────────────────────────────────────────
+
+    /**
+     * Get HSL color for a class index, distributed evenly across the hue wheel.
+     * @param {number} classIndex
+     * @param {number} numClasses
+     * @returns {string}
+     */
+    function getClassColor(classIndex, numClasses) {
+      const hue = Math.round((classIndex / Math.max(numClasses, 1)) * 360);
+      return `hsl(${hue}, 80%, 55%)`;
+    }
+
+    /**
+     * Draw the image on the canvas, then overlay bounding boxes and labels for
+     * each detection.
+     *
+     * @param {HTMLCanvasElement} canvas
+     * @param {HTMLImageElement} image
+     * @param {Array<{ className: string, confidence: number, box: { x: number, y: number, width: number, height: number } }>} detections
+     * @param {Map<string, string>} classColors  — maps className → CSS color string
+     */
+    function drawDetections(canvas, image, detections, classColors) {
+      // 1. Resize canvas to match the image's natural dimensions
+      canvas.width  = image.naturalWidth;
+      canvas.height = image.naturalHeight;
+
+      const ctx = canvas.getContext('2d');
+
+      // 2. Draw the source image
+      ctx.drawImage(image, 0, 0, image.naturalWidth, image.naturalHeight);
+
+      // 3. Draw each detection
+      ctx.lineWidth = 2;
+      ctx.font = 'bold 14px system-ui, sans-serif';
+
+      for (const det of detections) {
+        const { x, y, width, height } = det.box;
+        const color = getClassColor(det.classIndex, classes.length);
+        const label = `${det.className}: ${det.confidence.toFixed(2)}`;
+
+        // Bounding box
+        ctx.strokeStyle = color;
+        ctx.strokeRect(x, y, width, height);
+
+        // Label background
+        const textMetrics = ctx.measureText(label);
+        const textW = textMetrics.width + 6;
+        const textH = 18;
+        const labelY = y > textH ? y - textH : y + height;
+
+        ctx.fillStyle = color;
+        ctx.fillRect(x, labelY, textW, textH);
+
+        // Label text
+        ctx.fillStyle = '#ffffff';
+        ctx.fillText(label, x + 3, labelY + 13);
+      }
+    }
+
+    /**
+     * Aggregate detections into per-class stats, then render the #detection-table.
+     * If detections is empty, hides #table-section and returns.
+     *
+     * @param {Array<{ className: string, confidence: number }>} detections
+     */
+    function renderTable(detections) {
+      const tableSection = document.getElementById('table-section');
+
+      if (!detections || detections.length === 0) {
+        tableSection.style.display = 'none';
+        return;
+      }
+
+      // Aggregate: count occurrences and sum confidences per class
+      /** @type {Map<string, { count: number, sumConfidence: number }>} */
+      const statsMap = new Map();
+      for (const det of detections) {
+        const existing = statsMap.get(det.className);
+        if (existing) {
+          existing.count += 1;
+          existing.sumConfidence += det.confidence;
+        } else {
+          statsMap.set(det.className, { count: 1, sumConfidence: det.confidence });
+        }
+      }
+
+      // Build ClassStats array and calculate avgConfidence
+      const stats = [];
+      for (const [className, { count, sumConfidence }] of statsMap) {
+        stats.push({ className, count, avgConfidence: sumConfidence / count });
+      }
+
+      // Sort by count descending
+      stats.sort((a, b) => b.count - a.count);
+
+      // Render rows
+      const tbody = document.getElementById('table-body');
+      tbody.innerHTML = '';
+      for (const { className, count, avgConfidence } of stats) {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+          <td>${className}</td>
+          <td>${count}</td>
+          <td>${(avgConfidence * 100).toFixed(1)}%</td>
+        `;
+        tbody.appendChild(tr);
+      }
+
+      tableSection.style.display = 'block';
+    }
+
+    // ── Initialisation ────────────────────────────────────────────────────────
+    (async function init() {
+      const detectBtn = document.getElementById('detect-btn');
+      const modelSelect = document.getElementById('model-select');
+      detectBtn.disabled = true;
+      modelSelect.disabled = true;
+      setStatus('loading', 'Đang tải danh sách model...');
+
+      try {
+        registry = await loadRegistry();
+        populateModelDropdown(registry);
+        modelSelect.disabled = false;
+        await loadSelectedModel();
+      } catch (err) {
+        console.error('Khởi tạo thất bại:', err);
+        setStatus('error', `Lỗi khởi tạo: ${err.message}`);
+        detectBtn.disabled = true;
+      }
+    })();
+
+    /**
+     * Load the model currently selected in the dropdown.
+     */
+    async function loadSelectedModel() {
+      const detectBtn = document.getElementById('detect-btn');
+      const modelSelect = document.getElementById('model-select');
+      const entry = registry[parseInt(modelSelect.value, 10)];
+      if (!entry) return;
+
+      detectBtn.disabled = true;
+      setStatus('loading', `Đang tải model "${entry.name}"...`);
+
+      try {
+        [session, classes] = await Promise.all([
+          loadModel(entry.modelPath),
+          loadClasses(entry.classesPath),
+        ]);
+        setStatus('ready', `Sẵn sàng — ${entry.name} (${classes.length} class)`);
+        detectBtn.disabled = false;
+      } catch (err) {
+        console.error('Load model thất bại:', err);
+        setStatus('error', `Lỗi tải model: ${err.message}`);
+        detectBtn.disabled = true;
+      }
+    }
+
+    // ── Model Selector Handler ────────────────────────────────────────────────
+    document.getElementById('model-select').addEventListener('change', async function () {
+      clearResults();
+      await loadSelectedModel();
+    });
+
+    // ── Detect Button Handler ─────────────────────────────────────────────────
+    document.getElementById('detect-btn').addEventListener('click', async function () {
+      if (!currentImage || !session) return;
+
+      const detectBtn = document.getElementById('detect-btn');
+      detectBtn.disabled = true;
+      setStatus('processing', 'Đang nhận diện...');
+
+      try {
+        const t0 = performance.now();
+        const preprocessResult = preprocessImage(currentImage);
+        const detections = await runDetection(session, preprocessResult, classes, 0.25, 0.45);
+        const elapsed = performance.now() - t0;
+
+        drawDetections(document.getElementById('result-canvas'), currentImage, detections, null);
+        renderTable(detections);
+        showTiming(elapsed);
+
+        if (detections.length === 0) {
+          setStatus('ready', 'Không phát hiện đối tượng nào');
+        } else {
+          setStatus('ready', `Phát hiện ${detections.length} đối tượng`);
+        }
+      } catch (err) {
+        console.error('Lỗi nhận diện:', err);
+        setStatus('error', `Lỗi: ${err.message}`);
+      } finally {
+        detectBtn.disabled = false;
+      }
+    });
+
+    // ── Timing ────────────────────────────────────────────────────────────────
+    function showTiming(ms, fps = null) {
+      const bar = document.getElementById('timing-bar');
+      bar.classList.add('visible');
+      document.getElementById('timing-inference').textContent = ms.toFixed(1) + ' ms';
+      const fpsItem = document.getElementById('fps-item');
+      if (fps !== null) {
+        fpsItem.style.display = 'flex';
+        document.getElementById('timing-fps').textContent = fps.toFixed(1);
+      } else {
+        fpsItem.style.display = 'none';
+      }
+    }
+
+    // ── Source Tabs ───────────────────────────────────────────────────────────
+    document.getElementById('tab-image').addEventListener('click', () => switchTab('image'));
+    document.getElementById('tab-webcam').addEventListener('click', () => switchTab('webcam'));
+
+    function switchTab(tab) {
+      const isImage = tab === 'image';
+      document.getElementById('tab-image').classList.toggle('active', isImage);
+      document.getElementById('tab-webcam').classList.toggle('active', !isImage);
+      document.getElementById('image-panel').classList.toggle('hidden', !isImage);
+      document.getElementById('webcam-panel').classList.toggle('active', !isImage);
+      if (isImage) stopWebcam();
+    }
+
+    // ── Webcam ────────────────────────────────────────────────────────────────
+    let webcamStream = null;
+    let webcamRunning = false;
+    let webcamRafId = null;
+    let fpsFrameCount = 0;
+    let fpsLastTime = 0;
+    let currentFps = 0;
+
+    const video       = document.getElementById('webcam-video');
+    const startBtn    = document.getElementById('webcam-start-btn');
+    const detectWcBtn = document.getElementById('webcam-detect-btn');
+    const captureBtn  = document.getElementById('webcam-capture-btn');
+    const stopBtn     = document.getElementById('webcam-stop-btn');
+
+    startBtn.addEventListener('click', startWebcam);
+    detectWcBtn.addEventListener('click', toggleWebcamDetection);
+    stopBtn.addEventListener('click', stopWebcam);
+    captureBtn.addEventListener('click', captureToClipboard);
+
+    async function startWebcam() {
+      try {
+        webcamStream = await navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480 } });
+        video.srcObject = webcamStream;
+        video.style.display = 'block';
+        startBtn.disabled = true;
+        detectWcBtn.disabled = false;
+        stopBtn.disabled = false;
+        setStatus('ready', 'Webcam đã bật — nhấn "Bắt đầu nhận diện"');
+      } catch (err) {
+        setStatus('error', `Không thể truy cập webcam: ${err.message}`);
+      }
+    }
+
+    function toggleWebcamDetection() {
+      if (webcamRunning) {
+        webcamRunning = false;
+        if (webcamRafId) cancelAnimationFrame(webcamRafId);
+        detectWcBtn.textContent = '⏯ Bắt đầu nhận diện';
+        captureBtn.disabled = true;
+        setStatus('ready', 'Đã dừng nhận diện webcam');
+      } else {
+        if (!session) { setStatus('error', 'Chưa tải model'); return; }
+        webcamRunning = true;
+        fpsFrameCount = 0;
+        fpsLastTime = performance.now();
+        detectWcBtn.textContent = '⏸ Tạm dừng';
+        captureBtn.disabled = false;
+        webcamLoop();
+      }
+    }
+
+    async function webcamLoop() {
+      if (!webcamRunning) return;
+
+      if (video.readyState >= 2) {
+        const t0 = performance.now();
+
+        // Draw video frame to original canvas
+        const origCanvas = document.getElementById('original-canvas');
+        origCanvas.width  = video.videoWidth  || 640;
+        origCanvas.height = video.videoHeight || 480;
+        origCanvas.getContext('2d').drawImage(video, 0, 0);
+
+        // Preprocess from canvas (treat as image-like)
+        const src = { naturalWidth: origCanvas.width, naturalHeight: origCanvas.height, _canvas: origCanvas };
+        const preprocessResult = preprocessFromCanvas(origCanvas);
+        const detections = await runDetection(session, preprocessResult, classes, 0.25, 0.45);
+        const elapsed = performance.now() - t0;
+
+        // Draw result
+        const resultCanvas = document.getElementById('result-canvas');
+        resultCanvas.width  = origCanvas.width;
+        resultCanvas.height = origCanvas.height;
+        const ctx = resultCanvas.getContext('2d');
+        ctx.drawImage(origCanvas, 0, 0);
+        drawDetectionsOnCtx(ctx, detections, origCanvas.width, origCanvas.height);
+
+        renderTable(detections);
+
+        // FPS
+        fpsFrameCount++;
+        const now = performance.now();
+        if (now - fpsLastTime >= 500) {
+          currentFps = fpsFrameCount / ((now - fpsLastTime) / 1000);
+          fpsFrameCount = 0;
+          fpsLastTime = now;
+        }
+        showTiming(elapsed, currentFps);
+      }
+
+      webcamRafId = requestAnimationFrame(webcamLoop);
+    }
+
+    function stopWebcam() {
+      webcamRunning = false;
+      if (webcamRafId) cancelAnimationFrame(webcamRafId);
+      if (webcamStream) {
+        webcamStream.getTracks().forEach(t => t.stop());
+        webcamStream = null;
+      }
+      video.srcObject = null;
+      video.style.display = 'none';
+      startBtn.disabled = false;
+      detectWcBtn.disabled = true;
+      detectWcBtn.textContent = '⏯ Bắt đầu nhận diện';
+      captureBtn.disabled = true;
+      stopBtn.disabled = true;
+      setStatus('ready', 'Webcam đã tắt');
+    }
+
+    async function captureToClipboard() {
+      const resultCanvas = document.getElementById('result-canvas');
+      try {
+        const blob = await new Promise(res => resultCanvas.toBlob(res, 'image/png'));
+        await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
+        setStatus('ready', '✅ Đã copy ảnh vào clipboard');
+      } catch (err) {
+        setStatus('error', `Không thể copy: ${err.message}`);
+      }
+    }
+
+    // Preprocess directly from a canvas element (no naturalWidth needed)
+    function preprocessFromCanvas(srcCanvas) {
+      const origW = srcCanvas.width;
+      const origH = srcCanvas.height;
+      const scale  = Math.min(MODEL_INPUT_SIZE / origW, MODEL_INPUT_SIZE / origH);
+      const scaledW = Math.min(Math.max(1, Math.round(origW * scale)), MODEL_INPUT_SIZE);
+      const scaledH = Math.min(Math.max(1, Math.round(origH * scale)), MODEL_INPUT_SIZE);
+      const padX = Math.floor((MODEL_INPUT_SIZE - scaledW) / 2);
+      const padY = Math.floor((MODEL_INPUT_SIZE - scaledH) / 2);
+
+      const offscreen = new OffscreenCanvas(MODEL_INPUT_SIZE, MODEL_INPUT_SIZE);
+      const ctx = offscreen.getContext('2d');
+      ctx.fillStyle = 'rgb(128,128,128)';
+      ctx.fillRect(0, 0, MODEL_INPUT_SIZE, MODEL_INPUT_SIZE);
+      ctx.drawImage(srcCanvas, padX, padY, scaledW, scaledH);
+
+      const pixels = ctx.getImageData(0, 0, MODEL_INPUT_SIZE, MODEL_INPUT_SIZE).data;
+      const numPixels = MODEL_INPUT_SIZE * MODEL_INPUT_SIZE;
+      const tensor = new Float32Array(3 * numPixels);
+      for (let i = 0; i < numPixels; i++) {
+        tensor[i]               = pixels[i * 4]     / 255;
+        tensor[numPixels + i]   = pixels[i * 4 + 1] / 255;
+        tensor[2 * numPixels + i] = pixels[i * 4 + 2] / 255;
+      }
+      return { tensor, scaleX: scaledW / origW, scaleY: scaledH / origH, padX, padY };
+    }
+
+    // Draw detections onto an existing ctx (used for webcam — canvas already has frame)
+    function drawDetectionsOnCtx(ctx, detections, imgW, imgH) {
+      ctx.lineWidth = 2;
+      ctx.font = 'bold 14px system-ui, sans-serif';
+      for (const det of detections) {
+        const { x, y, width, height } = det.box;
+        const color = getClassColor(det.classIndex, classes.length);
+        const label = `${det.className}: ${det.confidence.toFixed(2)}`;
+        ctx.strokeStyle = color;
+        ctx.strokeRect(x, y, width, height);
+        const tw = ctx.measureText(label).width + 6;
+        const th = 18;
+        const ly = y > th ? y - th : y + height;
+        ctx.fillStyle = color;
+        ctx.fillRect(x, ly, tw, th);
+        ctx.fillStyle = '#fff';
+        ctx.fillText(label, x + 3, ly + 13);
+      }
+    }
+    // ── Magnifier ─────────────────────────────────────────────────────────────
+    (function initMagnifier() {
+      const magnifier    = document.getElementById('magnifier');
+      const magCanvas    = document.getElementById('magnifier-canvas');
+      const magCtx       = magCanvas.getContext('2d');
+      const zoomSlider   = document.getElementById('zoom-slider');
+      const zoomValueEl  = document.getElementById('zoom-value');
+      const sizeSlider   = document.getElementById('size-slider');
+      const sizeValueEl  = document.getElementById('size-value');
+
+      let zoomLevel = parseFloat(zoomSlider.value);
+      let lensSize  = parseInt(sizeSlider.value, 10);
+
+      function applyLensSize(size) {
+        magnifier.style.width  = size + 'px';
+        magnifier.style.height = size + 'px';
+        magCanvas.width  = size;
+        magCanvas.height = size;
+      }
+
+      applyLensSize(lensSize);
+
+      zoomSlider.addEventListener('input', () => {
+        zoomLevel = parseFloat(zoomSlider.value);
+        zoomValueEl.textContent = `×${zoomLevel % 1 === 0 ? zoomLevel : zoomLevel.toFixed(1)}`;
+      });
+
+      sizeSlider.addEventListener('input', () => {
+        lensSize = parseInt(sizeSlider.value, 10);
+        sizeValueEl.textContent = lensSize + 'px';
+        applyLensSize(lensSize);
+      });
+
+      const targets = ['original-canvas', 'result-canvas', 'webcam-video'];
+
+      targets.forEach(id => {
+        const canvas = document.getElementById(id);
+
+        canvas.addEventListener('mouseenter', () => {
+          magnifier.style.display = 'block';
+          canvas.style.cursor = 'crosshair';
+        });
+
+        canvas.addEventListener('mouseleave', () => {
+          magnifier.style.display = 'none';
+          canvas.style.cursor = '';
+        });
+
+        canvas.addEventListener('mousemove', (e) => {
+          const rect   = canvas.getBoundingClientRect();
+          const elX = e.clientX - rect.left;
+          const elY = e.clientY - rect.top;
+
+          const scaleX = canvas.width  / rect.width;
+          const scaleY = canvas.height / rect.height;
+          const srcX   = elX * scaleX;
+          const srcY   = elY * scaleY;
+
+          const srcW = lensSize / zoomLevel;
+          const srcH = lensSize / zoomLevel;
+
+          magCtx.clearRect(0, 0, lensSize, lensSize);
+          magCtx.drawImage(
+            canvas,
+            srcX - srcW / 2, srcY - srcH / 2, srcW, srcH,
+            0, 0, lensSize, lensSize
+          );
+
+          const offset = 8;
+          let lensX = e.clientX + offset;
+          let lensY = e.clientY + offset;
+
+          if (lensX + lensSize > window.innerWidth)  lensX = e.clientX - lensSize - offset;
+          if (lensY + lensSize > window.innerHeight)  lensY = e.clientY - lensSize - offset;
+
+          magnifier.style.left = lensX + 'px';
+          magnifier.style.top  = lensY + 'px';
+        });
+      });
+    })();
+  </script>
+</body>
+</html>

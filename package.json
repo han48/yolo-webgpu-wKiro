@@ -1,0 +1,12 @@
+{
+  "name": "yolo-image-detection",
+  "type": "module",
+  "scripts": {
+    "test": "vitest --run"
+  },
+  "devDependencies": {
+    "fast-check": "^3.22.0",
+    "jsdom": "^29.0.2",
+    "vitest": "^2.0.0"
+  }
+}
