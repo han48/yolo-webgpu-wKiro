@@ -43,6 +43,8 @@ Xây dựng static web app (single HTML file) thực hiện object detection b�
 - [x] 3. Implement xử lý chọn ảnh
   - [x] 3.1 Implement file input handler — validate MIME type (`image/png`, `image/jpeg`, `image/webp`), hiển thị ảnh gốc lên canvas, gọi `clearResults()` khi chọn ảnh mới
     - _Requirements: 2.1, 2.2, 2.3, 2.4, 2.5_
+  - [x] 3.3 Implement "or try sample" button — thêm button bên dưới file input, khi click tải `hikari.jpg` và hiển thị lên canvas gốc như ảnh thường, gọi `clearResults()` trước
+    - _Requirements: 2.6, 2.7_
   - [x] 3.2 Viết property test cho file format validation (Property 1)
     - **Property 1: File format validation**
     - Generate random MIME type strings, verify chỉ accept `image/png`, `image/jpeg`, `image/webp`

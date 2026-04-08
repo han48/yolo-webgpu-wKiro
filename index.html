@@ -155,6 +155,22 @@
       background: #e8f4fd;
     }
 
+    .btn-sample {
+      background: none;
+      border: none;
+      color: #1565c0;
+      font-size: 0.85rem;
+      cursor: pointer;
+      text-decoration: underline;
+      padding: 2px 4px;
+      opacity: 0.75;
+      transition: opacity 0.2s;
+    }
+
+    .btn-sample:hover {
+      opacity: 1;
+    }
+
     #file-input {
       display: none;
     }
@@ -421,6 +437,7 @@
           📁 Chọn ảnh (PNG, JPG, WEBP)
         </label>
         <input type="file" id="file-input" accept="image/png,image/jpeg,image/webp" />
+        <button id="sample-btn" class="btn-sample">or try sample</button>
         <button id="detect-btn" disabled>Detect</button>
       </div>
 
@@ -621,6 +638,27 @@
         img.src = readerEvent.target.result;
       };
       reader.readAsDataURL(file);
+    });
+
+    // ── Sample Image Handler ──────────────────────────────────────────────────
+    document.getElementById('sample-btn').addEventListener('click', function () {
+      clearResults();
+      const img = new Image();
+      img.onload = function () {
+        currentImage = img;
+        const canvas = document.getElementById('original-canvas');
+        let drawW = img.naturalWidth;
+        let drawH = img.naturalHeight;
+        if (drawW > MAX_CANVAS_SIZE || drawH > MAX_CANVAS_SIZE) {
+          const ratio = Math.min(MAX_CANVAS_SIZE / drawW, MAX_CANVAS_SIZE / drawH);
+          drawW = Math.round(drawW * ratio);
+          drawH = Math.round(drawH * ratio);
+        }
+        canvas.width  = drawW;
+        canvas.height = drawH;
+        canvas.getContext('2d').drawImage(img, 0, 0, drawW, drawH);
+      };
+      img.src = 'hikari.jpg';
     });
 
     // ── ImagePreprocessor ─────────────────────────────────────────────────────

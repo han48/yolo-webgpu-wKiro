@@ -57,6 +57,8 @@ App hỗ trợ nhiều model — mỗi model nằm trong một subfolder riêng 
 3. IF người dùng chọn file không phải định dạng ảnh hợp lệ, THEN THE App SHALL hiển thị thông báo lỗi định dạng.
 4. WHEN người dùng chọn ảnh hợp lệ, THE App SHALL hiển thị ảnh gốc trên giao diện trước khi thực hiện inference.
 5. WHEN người dùng chọn ảnh mới, THE App SHALL xóa kết quả nhận diện cũ trước khi hiển thị ảnh mới.
+6. THE App SHALL cung cấp nút "or try sample" bên dưới nút chọn file để người dùng thử nhanh với ảnh mẫu `hikari.jpg`.
+7. WHEN người dùng nhấn nút "or try sample", THE App SHALL tải và hiển thị ảnh `hikari.jpg` như thể người dùng đã chọn file đó, bao gồm xóa kết quả cũ và hiển thị ảnh lên canvas gốc.
 
 ---
 
