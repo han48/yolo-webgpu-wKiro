@@ -47,16 +47,33 @@ def download_file(url: str, dest: Path) -> None:
 
 def convert_to_onnx(pt_path: Path, output_path: Path) -> None:
     try:
+        import ultralytics
         from ultralytics import YOLO
+        from packaging.version import Version
     except ImportError:
         print("ultralytics not found. Install it with: pip install ultralytics", file=sys.stderr)
         sys.exit(1)
+
+    # YOLO26 NMS-free export requires ultralytics >= 8.4.41
+    MIN_VERSION = "8.4.41"
+    current = ultralytics.__version__
+    try:
+        if Version(current) < Version(MIN_VERSION):
+            print(
+                f"Warning: ultralytics {current} detected. "
+                f"YOLO26 requires >= {MIN_VERSION} for correct NMS-free export.\n"
+                f"Please upgrade: pip install -U ultralytics",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+    except Exception:
+        pass  # packaging not available, skip check
 
     print(f"Loading model from {pt_path} ...")
     model = YOLO(str(pt_path))
 
     print(f"Exporting to ONNX (imgsz={INPUT_SIZE}) ...")
-    exported = model.export(format="onnx", imgsz=INPUT_SIZE, simplify=True)
+    exported = model.export(format="onnx", imgsz=INPUT_SIZE, simplify=False)
 
     exported_path = Path(exported)
     shutil.move(str(exported_path), str(output_path))
@@ -82,12 +99,18 @@ def update_registry(model_id: str, model_name: str) -> None:
     # Remove existing entry with same id
     registry["models"] = [m for m in registry["models"] if m["id"] != model_id]
 
-    registry["models"].append({
+    entry = {
         "id": model_id,
         "name": model_name,
         "modelPath": f"models/{model_id}/model.onnx",
         "classesPath": f"models/{model_id}/classes.txt",
-    })
+    }
+
+    # Tag model type for special handling
+    if "yolo26" in model_id.lower():
+        entry["type"] = "yolo26"
+
+    registry["models"].append(entry)
 
     REGISTRY_PATH.write_text(json.dumps(registry, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     print(f"registry.json updated — model id: '{model_id}'")
