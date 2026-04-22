@@ -171,7 +171,8 @@
       opacity: 1;
     }
 
-    #file-input {
+    #file-input,
+    #video-file-input {
       display: none;
     }
 
@@ -199,6 +200,8 @@
     /* Webcam */
     #webcam-panel { display: none; flex-direction: column; align-items: center; gap: 10px; width: 100%; }
     #webcam-panel.active { display: flex; }
+    #video-panel  { display: none; flex-direction: column; align-items: center; gap: 10px; width: 100%; }
+    #video-panel.active  { display: flex; }
     #image-panel { display: flex; flex-direction: column; align-items: center; gap: 10px; }
     #image-panel.hidden { display: none; }
 
@@ -208,6 +211,38 @@
       border: 1px solid #e0e0e0;
       background: #111;
       display: none;
+    }
+
+    #video-player {
+      max-width: 100%;
+      border-radius: 8px;
+      border: 1px solid #e0e0e0;
+      background: #111;
+      display: none;
+    }
+
+    .video-progress-wrap {
+      width: 100%;
+      max-width: 640px;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    #video-progress {
+      width: 100%;
+      accent-color: #1565c0;
+      cursor: pointer;
+    }
+
+    #video-progress:disabled { opacity: 0.4; cursor: default; }
+
+    .video-time {
+      display: flex;
+      justify-content: space-between;
+      font-size: 0.82rem;
+      color: #888;
+      padding: 0 2px;
     }
 
     .webcam-controls {
@@ -429,6 +464,7 @@
       <div class="source-tabs">
         <button class="tab-btn active" id="tab-image">🖼 Ảnh</button>
         <button class="tab-btn" id="tab-webcam">📷 Webcam</button>
+        <button class="tab-btn" id="tab-video">🎬 Video</button>
       </div>
 
       <!-- Image panel -->
@@ -449,6 +485,28 @@
           <button class="btn-secondary" id="webcam-detect-btn" disabled>⏯ Bắt đầu nhận diện</button>
           <button class="btn-secondary" id="webcam-capture-btn" disabled>📋 Capture → Clipboard</button>
           <button class="btn-danger" id="webcam-stop-btn" disabled>■ Dừng</button>
+        </div>
+      </div>
+
+      <!-- Video panel -->
+      <div id="video-panel">
+        <label class="file-label" for="video-file-input">
+          📁 Chọn video (MP4, WebM, MOV)
+        </label>
+        <input type="file" id="video-file-input" accept="video/mp4,video/webm,video/quicktime" />
+        <video id="video-player" playsinline muted width="640" height="360"></video>
+        <div class="video-progress-wrap">
+          <input type="range" id="video-progress" min="0" max="100" step="0.1" value="0" disabled />
+          <div class="video-time">
+            <span id="video-current-time">0:00</span>
+            <span id="video-duration">0:00</span>
+          </div>
+        </div>
+        <div class="webcam-controls">
+          <button class="btn-secondary" id="video-play-btn" disabled>▶ Play</button>
+          <button class="btn-secondary" id="video-detect-btn" disabled>🎯 Bắt đầu nhận diện</button>
+          <button class="btn-secondary" id="video-capture-btn" disabled>📋 Capture → Clipboard</button>
+          <button class="btn-danger" id="video-stop-btn" disabled>■ Reset</button>
         </div>
       </div>
     </div>
@@ -678,14 +736,17 @@
     // ── Source Tabs ───────────────────────────────────────────────────────────
     document.getElementById('tab-image').addEventListener('click', () => switchTab('image'));
     document.getElementById('tab-webcam').addEventListener('click', () => switchTab('webcam'));
+    document.getElementById('tab-video').addEventListener('click', () => switchTab('video'));
 
     function switchTab(tab) {
-      const isImage = tab === 'image';
-      document.getElementById('tab-image').classList.toggle('active', isImage);
-      document.getElementById('tab-webcam').classList.toggle('active', !isImage);
-      document.getElementById('image-panel').classList.toggle('hidden', !isImage);
-      document.getElementById('webcam-panel').classList.toggle('active', !isImage);
-      if (isImage) stopWebcam();
+      ['image', 'webcam', 'video'].forEach(t => {
+        document.getElementById(`tab-${t}`).classList.toggle('active', t === tab);
+      });
+      document.getElementById('image-panel').classList.toggle('hidden', tab !== 'image');
+      document.getElementById('webcam-panel').classList.toggle('active', tab === 'webcam');
+      document.getElementById('video-panel').classList.toggle('active', tab === 'video');
+      if (tab !== 'webcam') stopWebcam();
+      if (tab !== 'video') stopVideo();
     }
 
     // ── Webcam ────────────────────────────────────────────────────────────────
@@ -784,6 +845,157 @@
       }
     }
 
+    // ── Video ─────────────────────────────────────────────────────────────────
+    let videoObjectUrl = null, videoDetecting = false, videoRafId = null;
+    let videoFpsCount = 0, videoFpsLastTime = 0, videoCurrentFps = 0;
+
+    const videoPlayer     = document.getElementById('video-player');
+    const videoProgress   = document.getElementById('video-progress');
+    const videoCurrentEl  = document.getElementById('video-current-time');
+    const videoDurationEl = document.getElementById('video-duration');
+    const videoPlayBtn    = document.getElementById('video-play-btn');
+    const videoDetectBtn  = document.getElementById('video-detect-btn');
+    const videoCaptureBtn = document.getElementById('video-capture-btn');
+    const videoStopBtn    = document.getElementById('video-stop-btn');
+
+    function formatTime(s) {
+      const m = Math.floor(s / 60);
+      return `${m}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
+    }
+
+    document.getElementById('video-file-input').addEventListener('change', function (e) {
+      const file = e.target.files[0];
+      if (!file) return;
+      stopVideo();
+      if (videoObjectUrl) URL.revokeObjectURL(videoObjectUrl);
+      videoObjectUrl = URL.createObjectURL(file);
+      videoPlayer.src = videoObjectUrl;
+      videoPlayer.style.display = 'block';
+      videoPlayer.load();
+    });
+
+    videoPlayer.addEventListener('loadedmetadata', () => {
+      videoProgress.max = videoPlayer.duration;
+      videoProgress.value = 0;
+      videoProgress.disabled = false;
+      videoDurationEl.textContent = formatTime(videoPlayer.duration);
+      videoCurrentEl.textContent = '0:00';
+      videoPlayBtn.disabled = false;
+      videoDetectBtn.disabled = false;
+      videoStopBtn.disabled = false;
+      setStatus('ready', 'Video đã tải — nhấn Play hoặc Bắt đầu nhận diện');
+    });
+
+    videoPlayer.addEventListener('timeupdate', () => {
+      if (!videoPlayer.seeking) {
+        videoProgress.value = videoPlayer.currentTime;
+        videoCurrentEl.textContent = formatTime(videoPlayer.currentTime);
+      }
+    });
+
+    videoPlayer.addEventListener('ended', () => {
+      videoPlayBtn.textContent = '▶ Play';
+      if (videoDetecting) stopVideoDetection();
+    });
+
+    videoProgress.addEventListener('input', () => {
+      videoPlayer.currentTime = parseFloat(videoProgress.value);
+    });
+
+    videoPlayBtn.addEventListener('click', () => {
+      if (videoPlayer.paused) {
+        videoPlayer.play();
+        videoPlayBtn.textContent = '⏸ Pause';
+      } else {
+        videoPlayer.pause();
+        videoPlayBtn.textContent = '▶ Play';
+      }
+    });
+
+    videoDetectBtn.addEventListener('click', () => {
+      if (videoDetecting) {
+        stopVideoDetection();
+      } else {
+        if (!detector) { setStatus('error', 'Chưa tải model'); return; }
+        videoDetecting = true;
+        videoFpsCount = 0; videoFpsLastTime = performance.now();
+        videoDetectBtn.textContent = '⏹ Dừng nhận diện';
+        videoCaptureBtn.disabled = false;
+        if (videoPlayer.paused) videoPlayer.play();
+        videoPlayBtn.textContent = '⏸ Pause';
+        videoDetectLoop();
+      }
+    });
+
+    async function videoDetectLoop() {
+      if (!videoDetecting || videoPlayer.paused || videoPlayer.ended) {
+        if (videoPlayer.ended) stopVideoDetection();
+        return;
+      }
+      const t0 = performance.now();
+      const origCanvas = document.getElementById('original-canvas');
+      origCanvas.width  = videoPlayer.videoWidth  || 640;
+      origCanvas.height = videoPlayer.videoHeight || 360;
+      origCanvas.getContext('2d').drawImage(videoPlayer, 0, 0);
+
+      const pre = preprocessFromCanvas(origCanvas);
+      const detections = await runDetection(detector, currentModelEntry, pre);
+      const elapsed = performance.now() - t0;
+
+      const resultCanvas = document.getElementById('result-canvas');
+      resultCanvas.width = origCanvas.width; resultCanvas.height = origCanvas.height;
+      const ctx = resultCanvas.getContext('2d');
+      ctx.drawImage(origCanvas, 0, 0);
+      drawDetectionsOnCtx(ctx, detections, classes.length);
+      renderTable(detections);
+
+      videoFpsCount++;
+      const now = performance.now();
+      if (now - videoFpsLastTime >= 500) {
+        videoCurrentFps = videoFpsCount / ((now - videoFpsLastTime) / 1000);
+        videoFpsCount = 0; videoFpsLastTime = now;
+      }
+      showTiming(elapsed, videoCurrentFps);
+
+      videoRafId = requestAnimationFrame(videoDetectLoop);
+    }
+
+    function stopVideoDetection() {
+      videoDetecting = false;
+      if (videoRafId) cancelAnimationFrame(videoRafId);
+      videoDetectBtn.textContent = '🎯 Bắt đầu nhận diện';
+      videoCaptureBtn.disabled = true;
+    }
+
+    function stopVideo() {
+      stopVideoDetection();
+      videoPlayer.pause();
+      videoPlayer.src = '';
+      videoPlayer.style.display = 'none';
+      videoProgress.value = 0;
+      videoProgress.disabled = true;
+      videoCurrentEl.textContent = '0:00';
+      videoDurationEl.textContent = '0:00';
+      videoPlayBtn.textContent = '▶ Play';
+      videoPlayBtn.disabled = true;
+      videoDetectBtn.disabled = true;
+      videoCaptureBtn.disabled = true;
+      videoStopBtn.disabled = true;
+    }
+
+    videoCaptureBtn.addEventListener('click', async () => {
+      const resultCanvas = document.getElementById('result-canvas');
+      try {
+        const blob = await new Promise(res => resultCanvas.toBlob(res, 'image/png'));
+        await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
+        setStatus('ready', '✅ Đã copy frame vào clipboard');
+      } catch (err) {
+        setStatus('error', `Không thể copy: ${err.message}`);
+      }
+    });
+
+    videoStopBtn.addEventListener('click', stopVideo);
+
     // ── Magnifier ─────────────────────────────────────────────────────────────
     (function initMagnifier() {
       const magnifier   = document.getElementById('magnifier');
@@ -813,7 +1025,7 @@
         applyLensSize(lensSize);
       });
 
-      ['original-canvas', 'result-canvas', 'webcam-video'].forEach(id => {
+      ['original-canvas', 'result-canvas', 'webcam-video', 'video-player'].forEach(id => {
         const el = document.getElementById(id);
         el.addEventListener('mouseenter', () => { magnifier.style.display = 'block'; el.style.cursor = 'crosshair'; });
         el.addEventListener('mouseleave', () => { magnifier.style.display = 'none'; el.style.cursor = ''; });
