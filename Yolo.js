@@ -129,6 +129,34 @@ export const MODEL_INPUT_SIZE = 640;
 
 /** @returns {Promise<ort.InferenceSession>} */
 export async function loadModel(modelPath) {
+  // Cách 4: enable multi-threading
+  ort.env.wasm.numThreads = navigator.hardwareConcurrency ?? 4;
+
+  // Cách 2 & 3: thử WebGPU → WebGL → WASM (CPU) theo thứ tự ưu tiên
+  const providerChain = ['webgpu', 'webgl', 'wasm'];
+  for (const provider of providerChain) {
+    try {
+      const session = await ort.InferenceSession.create(modelPath, {
+        executionProviders: [provider],
+      });
+      console.log(`[ONNX] Using execution provider: ${provider}`);
+      console.log(`[ONNX] Model: ${modelPath}`);
+      
+      // Ghi chú về FP16 performance
+      if (modelPath.includes('-fp16')) {
+        console.warn(
+          '[ONNX] FP16 models may be slower than FP32 on web browsers.\n' +
+          'Reason: WebGPU/WebGL FP16 support is limited, WASM converts FP16→FP32.\n' +
+          'Use FP32 for best performance, FP16 only for size reduction.'
+        );
+      }
+      
+      return session;
+    } catch {
+      // provider không khả dụng, thử tiếp
+    }
+  }
+  // Fallback cuối cùng không có option
   return await ort.InferenceSession.create(modelPath);
 }
 
