@@ -511,433 +511,35 @@
   <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/ort.min.js"></script>
   <!-- App logic -->
   <script type="module">
-    import { DetectorYolo   } from './DetectorYolo.js';
-    import { DetectorYolo26 } from './DetectorYolo26.js';
-    // ── State ────────────────────────────────────────────────────────────────
-    let session = null;
-    let classes = [];
+    import {
+      loadModel, loadClasses, loadRegistry, createDetector, runDetection,
+      preprocessImage, preprocessFromCanvas,
+      drawDetections, drawDetectionsOnCtx, renderTable,
+    } from './Yolo.js';
 
-    // ── UIController ─────────────────────────────────────────────────────────
-    /**
-     * Update the #status element.
-     * @param {'loading'|'ready'|'processing'|'error'} state
-     * @param {string} [message]
-     */
+    // ── State ─────────────────────────────────────────────────────────────────
+    let session          = null;
+    let classes          = [];
+    let currentImage     = null;
+    let registry         = [];
+    let currentModelEntry = null;
+    let detector         = null;
+
+    // ── UI Helpers ────────────────────────────────────────────────────────────
     function setStatus(state, message) {
       const el = document.getElementById('status');
       el.className = state;
-      const defaults = {
-        loading:    'Đang tải...',
-        ready:      'Sẵn sàng',
-        processing: 'Đang xử lý...',
-        error:      'Lỗi',
-      };
+      const defaults = { loading: 'Đang tải...', ready: 'Sẵn sàng', processing: 'Đang xử lý...', error: 'Lỗi' };
       el.textContent = message ?? defaults[state] ?? '';
     }
 
-    /**
-     * Clear the result canvas and hide the stats table.
-     */
     function clearResults() {
       const canvas = document.getElementById('result-canvas');
       canvas.getContext('2d').clearRect(0, 0, canvas.width, canvas.height);
-
-      const tableSection = document.getElementById('table-section');
-      tableSection.style.display = 'none';
-
+      document.getElementById('table-section').style.display = 'none';
       document.getElementById('table-body').innerHTML = '';
     }
 
-    // ── ModelLoader ───────────────────────────────────────────────────────────
-    /**
-     * Load the ONNX model from the given path.
-     * @param {string} modelPath
-     * @returns {Promise<ort.InferenceSession>}
-     */
-    async function loadModel(modelPath) {
-      return await ort.InferenceSession.create(modelPath);
-    }
-
-    /**
-     * Fetch and parse the class list (one class name per line).
-     * @param {string} classesPath
-     * @returns {Promise<string[]>}
-     */
-    async function loadClasses(classesPath) {
-      const response = await fetch(classesPath);
-      if (!response.ok) {
-        throw new Error(`Không thể tải classes: ${response.status} ${response.statusText}`);
-      }
-      const text = await response.text();
-      return text.split('\n').map(line => line.trim()).filter(line => line.length > 0);
-    }
-
-    // ── ModelRegistry ─────────────────────────────────────────────────────────
-    /**
-     * Fetch and parse models/registry.json.
-     * @returns {Promise<Array<{id: string, name: string, modelPath: string, classesPath: string}>>}
-     */
-    async function loadRegistry() {
-      const response = await fetch('models/registry.json');
-      if (!response.ok) throw new Error(`Không thể tải registry: ${response.status}`);
-      const data = await response.json();
-      return data.models;
-    }
-
-    /**
-     * Populate the model <select> dropdown.
-     * @param {Array<{id: string, name: string}>} models
-     */
-    function populateModelDropdown(models) {
-      const select = document.getElementById('model-select');
-      select.innerHTML = '';
-      models.forEach((m, i) => {
-        const opt = document.createElement('option');
-        opt.value = i;
-        opt.textContent = m.name;
-        select.appendChild(opt);
-      });
-    }
-
-    // ── State (image) ─────────────────────────────────────────────────────────
-    let currentImage = null;   // HTMLImageElement of the currently selected image
-    let registry = [];         // ModelEntry[]
-    let currentModelEntry = null; // currently loaded registry entry
-
-    // ── File Input Handler ────────────────────────────────────────────────────
-    const ACCEPTED_TYPES = ['image/png', 'image/jpeg', 'image/webp'];
-    const MAX_CANVAS_SIZE = 640;
-
-    document.getElementById('file-input').addEventListener('change', function (e) {
-      const file = e.target.files[0];
-      if (!file) return;
-
-      if (!ACCEPTED_TYPES.includes(file.type)) {
-        setStatus('error', 'Định dạng không hợp lệ. Chỉ chấp nhận PNG, JPG, WEBP.');
-        return;
-      }
-
-      clearResults();
-
-      const reader = new FileReader();
-      reader.onload = function (readerEvent) {
-        const img = new Image();
-        img.onload = function () {
-          currentImage = img;
-
-          const canvas = document.getElementById('original-canvas');
-          // Fit within MAX_CANVAS_SIZE while preserving aspect ratio
-          let drawW = img.naturalWidth;
-          let drawH = img.naturalHeight;
-          if (drawW > MAX_CANVAS_SIZE || drawH > MAX_CANVAS_SIZE) {
-            const ratio = Math.min(MAX_CANVAS_SIZE / drawW, MAX_CANVAS_SIZE / drawH);
-            drawW = Math.round(drawW * ratio);
-            drawH = Math.round(drawH * ratio);
-          }
-          canvas.width  = drawW;
-          canvas.height = drawH;
-          canvas.getContext('2d').drawImage(img, 0, 0, drawW, drawH);
-        };
-        img.src = readerEvent.target.result;
-      };
-      reader.readAsDataURL(file);
-    });
-
-    // ── Sample Image Handler ──────────────────────────────────────────────────
-    document.getElementById('sample-btn').addEventListener('click', function () {
-      clearResults();
-      const img = new Image();
-      img.onload = function () {
-        currentImage = img;
-        const canvas = document.getElementById('original-canvas');
-        let drawW = img.naturalWidth;
-        let drawH = img.naturalHeight;
-        if (drawW > MAX_CANVAS_SIZE || drawH > MAX_CANVAS_SIZE) {
-          const ratio = Math.min(MAX_CANVAS_SIZE / drawW, MAX_CANVAS_SIZE / drawH);
-          drawW = Math.round(drawW * ratio);
-          drawH = Math.round(drawH * ratio);
-        }
-        canvas.width  = drawW;
-        canvas.height = drawH;
-        canvas.getContext('2d').drawImage(img, 0, 0, drawW, drawH);
-      };
-      img.src = 'hikari.jpg';
-    });
-
-    // ── ImagePreprocessor ─────────────────────────────────────────────────────
-    const MODEL_INPUT_SIZE = 640;
-
-    /**
-     * Resize and letterbox-pad an image to 640×640, returning a Float32Array
-     * tensor in CHW format (shape [1, 3, 640, 640]) with values normalized to
-     * [0, 1], plus the scale and padding info needed to map detections back to
-     * the original image space.
-     *
-     * @param {HTMLImageElement} imageElement
-     * @returns {{ tensor: Float32Array, scaleX: number, scaleY: number, padX: number, padY: number }}
-     */
-    function preprocessImage(imageElement) {
-      const origW = imageElement.naturalWidth;
-      const origH = imageElement.naturalHeight;
-
-      // Compute uniform scale so the image fits within 640×640
-      const scale = Math.min(MODEL_INPUT_SIZE / origW, MODEL_INPUT_SIZE / origH);
-      const scaledW = Math.min(Math.max(1, Math.round(origW * scale)), MODEL_INPUT_SIZE);
-      const scaledH = Math.min(Math.max(1, Math.round(origH * scale)), MODEL_INPUT_SIZE);
-
-      // Padding to center the scaled image within the 640×640 canvas
-      const padX = Math.floor((MODEL_INPUT_SIZE - scaledW) / 2);
-      const padY = Math.floor((MODEL_INPUT_SIZE - scaledH) / 2);
-
-      // Draw onto an offscreen canvas
-      const canvas = new OffscreenCanvas(MODEL_INPUT_SIZE, MODEL_INPUT_SIZE);
-      const ctx = canvas.getContext('2d');
-
-      // Fill with gray padding (128, 128, 128)
-      ctx.fillStyle = `rgb(128, 128, 128)`;
-      ctx.fillRect(0, 0, MODEL_INPUT_SIZE, MODEL_INPUT_SIZE);
-
-      // Draw the scaled image centered
-      ctx.drawImage(imageElement, padX, padY, scaledW, scaledH);
-
-      // Read pixel data (RGBA, HWC layout)
-      const imageData = ctx.getImageData(0, 0, MODEL_INPUT_SIZE, MODEL_INPUT_SIZE);
-      const pixels = imageData.data;  // Uint8ClampedArray, length = 640*640*4
-
-      // Build CHW Float32Array: [R flat, G flat, B flat]
-      const numPixels = MODEL_INPUT_SIZE * MODEL_INPUT_SIZE;
-      const tensor = new Float32Array(3 * numPixels);
-
-      for (let i = 0; i < numPixels; i++) {
-        tensor[i]                  = pixels[i * 4]     / 255.0;  // R
-        tensor[numPixels + i]      = pixels[i * 4 + 1] / 255.0;  // G
-        tensor[2 * numPixels + i]  = pixels[i * 4 + 2] / 255.0;  // B
-      }
-
-      return {
-        tensor,
-        scaleX: scaledW / origW,
-        scaleY: scaledH / origH,
-        padX,
-        padY,
-      };
-    }
-
-    // ── Detector factory ──────────────────────────────────────────────────────
-
-    /** @type {DetectorYolo|DetectorYolo26|null} */
-    let detector = null;
-
-    /**
-     * Auto-dispatch to the correct detector based on model type.
-     */
-    async function runDetectionAuto(preprocessResult, confThreshold, iouThreshold) {
-      if (!detector) return [];
-      return currentModelEntry?.type === 'yolo26'
-        ? detector.runDetectionYolo26(preprocessResult, confThreshold)
-        : detector.runDetectionYolo26(preprocessResult, confThreshold, iouThreshold);
-    }
-
-    // ── Renderer ─────────────────────────────────────────────────────────────
-
-    /**
-     * Get HSL color for a class index, distributed evenly across the hue wheel.
-     * @param {number} classIndex
-     * @param {number} numClasses
-     * @returns {string}
-     */
-    function getClassColor(classIndex, numClasses) {
-      const hue = Math.round((classIndex / Math.max(numClasses, 1)) * 360);
-      return `hsl(${hue}, 80%, 55%)`;
-    }
-
-    /**
-     * Draw the image on the canvas, then overlay bounding boxes and labels for
-     * each detection.
-     *
-     * @param {HTMLCanvasElement} canvas
-     * @param {HTMLImageElement} image
-     * @param {Array<{ className: string, confidence: number, box: { x: number, y: number, width: number, height: number } }>} detections
-     * @param {Map<string, string>} classColors  — maps className → CSS color string
-     */
-    function drawDetections(canvas, image, detections, classColors) {
-      // 1. Resize canvas to match the image's natural dimensions
-      canvas.width  = image.naturalWidth;
-      canvas.height = image.naturalHeight;
-
-      const ctx = canvas.getContext('2d');
-
-      // 2. Draw the source image
-      ctx.drawImage(image, 0, 0, image.naturalWidth, image.naturalHeight);
-
-      // 3. Draw each detection
-      ctx.lineWidth = 2;
-      ctx.font = 'bold 14px system-ui, sans-serif';
-
-      for (const det of detections) {
-        const { x, y, width, height } = det.box;
-        const color = getClassColor(det.classIndex, classes.length);
-        const label = `${det.className}: ${det.confidence.toFixed(2)}`;
-
-        // Bounding box
-        ctx.strokeStyle = color;
-        ctx.strokeRect(x, y, width, height);
-
-        // Label background
-        const textMetrics = ctx.measureText(label);
-        const textW = textMetrics.width + 6;
-        const textH = 18;
-        const labelY = y > textH ? y - textH : y + height;
-
-        ctx.fillStyle = color;
-        ctx.fillRect(x, labelY, textW, textH);
-
-        // Label text
-        ctx.fillStyle = '#ffffff';
-        ctx.fillText(label, x + 3, labelY + 13);
-      }
-    }
-
-    /**
-     * Aggregate detections into per-class stats, then render the #detection-table.
-     * If detections is empty, hides #table-section and returns.
-     *
-     * @param {Array<{ className: string, confidence: number }>} detections
-     */
-    function renderTable(detections) {
-      const tableSection = document.getElementById('table-section');
-
-      if (!detections || detections.length === 0) {
-        tableSection.style.display = 'none';
-        return;
-      }
-
-      // Aggregate: count occurrences and sum confidences per class
-      /** @type {Map<string, { count: number, sumConfidence: number }>} */
-      const statsMap = new Map();
-      for (const det of detections) {
-        const existing = statsMap.get(det.className);
-        if (existing) {
-          existing.count += 1;
-          existing.sumConfidence += det.confidence;
-        } else {
-          statsMap.set(det.className, { count: 1, sumConfidence: det.confidence });
-        }
-      }
-
-      // Build ClassStats array and calculate avgConfidence
-      const stats = [];
-      for (const [className, { count, sumConfidence }] of statsMap) {
-        stats.push({ className, count, avgConfidence: sumConfidence / count });
-      }
-
-      // Sort by count descending
-      stats.sort((a, b) => b.count - a.count);
-
-      // Render rows
-      const tbody = document.getElementById('table-body');
-      tbody.innerHTML = '';
-      for (const { className, count, avgConfidence } of stats) {
-        const tr = document.createElement('tr');
-        tr.innerHTML = `
-          <td>${className}</td>
-          <td>${count}</td>
-          <td>${(avgConfidence * 100).toFixed(1)}%</td>
-        `;
-        tbody.appendChild(tr);
-      }
-
-      tableSection.style.display = 'block';
-    }
-
-    // ── Initialisation ────────────────────────────────────────────────────────
-    (async function init() {
-      const detectBtn = document.getElementById('detect-btn');
-      const modelSelect = document.getElementById('model-select');
-      detectBtn.disabled = true;
-      modelSelect.disabled = true;
-      setStatus('loading', 'Đang tải danh sách model...');
-
-      try {
-        registry = await loadRegistry();
-        populateModelDropdown(registry);
-        modelSelect.disabled = false;
-        await loadSelectedModel();
-      } catch (err) {
-        console.error('Khởi tạo thất bại:', err);
-        setStatus('error', `Lỗi khởi tạo: ${err.message}`);
-        detectBtn.disabled = true;
-      }
-    })();
-
-    /**
-     * Load the model currently selected in the dropdown.
-     */
-    async function loadSelectedModel() {
-      const detectBtn = document.getElementById('detect-btn');
-      const modelSelect = document.getElementById('model-select');
-      const entry = registry[parseInt(modelSelect.value, 10)];
-      if (!entry) return;
-
-      detectBtn.disabled = true;
-      setStatus('loading', `Đang tải model "${entry.name}"...`);
-
-      try {
-        [session, classes] = await Promise.all([
-          loadModel(entry.modelPath),
-          loadClasses(entry.classesPath),
-        ]);
-        currentModelEntry = entry;
-        detector = entry.type === 'yolo26'
-          ? new DetectorYolo26(session, classes)
-          : new DetectorYolo(session, classes);
-        setStatus('ready', `Sẵn sàng — ${entry.name} (${classes.length} class)`);
-        detectBtn.disabled = false;
-      } catch (err) {
-        console.error('Load model thất bại:', err);
-        setStatus('error', `Lỗi tải model: ${err.message}`);
-        detectBtn.disabled = true;
-      }
-    }
-
-    // ── Model Selector Handler ────────────────────────────────────────────────
-    document.getElementById('model-select').addEventListener('change', async function () {
-      clearResults();
-      await loadSelectedModel();
-    });
-
-    // ── Detect Button Handler ─────────────────────────────────────────────────
-    document.getElementById('detect-btn').addEventListener('click', async function () {
-      if (!currentImage || !session) return;
-
-      const detectBtn = document.getElementById('detect-btn');
-      detectBtn.disabled = true;
-      setStatus('processing', 'Đang nhận diện...');
-
-      try {
-        const t0 = performance.now();
-        const preprocessResult = preprocessImage(currentImage);
-        const detections = await runDetectionAuto(preprocessResult, 0.25, 0.45);
-        const elapsed = performance.now() - t0;
-
-        drawDetections(document.getElementById('result-canvas'), currentImage, detections, null);
-        renderTable(detections);
-        showTiming(elapsed);
-
-        if (detections.length === 0) {
-          setStatus('ready', 'Không phát hiện đối tượng nào');
-        } else {
-          setStatus('ready', `Phát hiện ${detections.length} đối tượng`);
-        }
-      } catch (err) {
-        console.error('Lỗi nhận diện:', err);
-        setStatus('error', `Lỗi: ${err.message}`);
-      } finally {
-        detectBtn.disabled = false;
-      }
-    });
-
-    // ── Timing ────────────────────────────────────────────────────────────────
     function showTiming(ms, fps = null) {
       const bar = document.getElementById('timing-bar');
       bar.classList.add('visible');
@@ -950,6 +552,128 @@
         fpsItem.style.display = 'none';
       }
     }
+
+    // ── Model Loading ─────────────────────────────────────────────────────────
+    async function loadSelectedModel() {
+      const detectBtn  = document.getElementById('detect-btn');
+      const modelSelect = document.getElementById('model-select');
+      const entry = registry[parseInt(modelSelect.value, 10)];
+      if (!entry) return;
+
+      detectBtn.disabled = true;
+      setStatus('loading', `Đang tải model "${entry.name}"...`);
+      try {
+        [session, classes] = await Promise.all([loadModel(entry.modelPath), loadClasses(entry.classesPath)]);
+        currentModelEntry = entry;
+        detector = createDetector(session, classes, entry);
+        setStatus('ready', `Sẵn sàng — ${entry.name} (${classes.length} class)`);
+        detectBtn.disabled = false;
+      } catch (err) {
+        console.error('Load model thất bại:', err);
+        setStatus('error', `Lỗi tải model: ${err.message}`);
+        detectBtn.disabled = true;
+      }
+    }
+
+    // ── Init ──────────────────────────────────────────────────────────────────
+    (async function init() {
+      const detectBtn   = document.getElementById('detect-btn');
+      const modelSelect = document.getElementById('model-select');
+      detectBtn.disabled = true;
+      modelSelect.disabled = true;
+      setStatus('loading', 'Đang tải danh sách model...');
+      try {
+        registry = await loadRegistry();
+        modelSelect.innerHTML = '';
+        registry.forEach((m, i) => {
+          const opt = document.createElement('option');
+          opt.value = i; opt.textContent = m.name;
+          modelSelect.appendChild(opt);
+        });
+        modelSelect.disabled = false;
+        await loadSelectedModel();
+      } catch (err) {
+        console.error('Khởi tạo thất bại:', err);
+        setStatus('error', `Lỗi khởi tạo: ${err.message}`);
+        detectBtn.disabled = true;
+      }
+    })();
+
+    // ── Event Handlers ────────────────────────────────────────────────────────
+    document.getElementById('model-select').addEventListener('change', async () => {
+      clearResults();
+      await loadSelectedModel();
+    });
+
+    // File input
+    const ACCEPTED_TYPES = ['image/png', 'image/jpeg', 'image/webp'];
+    const MAX_CANVAS_SIZE = 640;
+
+    function displayImageOnCanvas(img) {
+      currentImage = img;
+      const canvas = document.getElementById('original-canvas');
+      let drawW = img.naturalWidth, drawH = img.naturalHeight;
+      if (drawW > MAX_CANVAS_SIZE || drawH > MAX_CANVAS_SIZE) {
+        const ratio = Math.min(MAX_CANVAS_SIZE / drawW, MAX_CANVAS_SIZE / drawH);
+        drawW = Math.round(drawW * ratio);
+        drawH = Math.round(drawH * ratio);
+      }
+      canvas.width = drawW; canvas.height = drawH;
+      canvas.getContext('2d').drawImage(img, 0, 0, drawW, drawH);
+    }
+
+    document.getElementById('file-input').addEventListener('change', function (e) {
+      const file = e.target.files[0];
+      if (!file) return;
+      if (!ACCEPTED_TYPES.includes(file.type)) {
+        setStatus('error', 'Định dạng không hợp lệ. Chỉ chấp nhận PNG, JPG, WEBP.');
+        return;
+      }
+      clearResults();
+      const reader = new FileReader();
+      reader.onload = (ev) => {
+        const img = new Image();
+        img.onload = () => displayImageOnCanvas(img);
+        img.src = ev.target.result;
+      };
+      reader.readAsDataURL(file);
+    });
+
+    // Sample image
+    document.getElementById('sample-btn').addEventListener('click', async () => {
+      clearResults();
+      try {
+        const blob = await (await fetch('hikari.jpg')).blob();
+        const blobUrl = URL.createObjectURL(blob);
+        const img = new Image();
+        img.onload = () => { displayImageOnCanvas(img); URL.revokeObjectURL(blobUrl); };
+        img.src = blobUrl;
+      } catch (err) {
+        setStatus('error', `Không thể tải ảnh mẫu: ${err.message}`);
+      }
+    });
+
+    // Detect button
+    document.getElementById('detect-btn').addEventListener('click', async function () {
+      if (!currentImage || !detector) return;
+      this.disabled = true;
+      setStatus('processing', 'Đang nhận diện...');
+      try {
+        const t0 = performance.now();
+        const pre = preprocessImage(currentImage);
+        const detections = await runDetection(detector, currentModelEntry, pre);
+        const elapsed = performance.now() - t0;
+        drawDetections(document.getElementById('result-canvas'), currentImage, detections);
+        renderTable(detections);
+        showTiming(elapsed);
+        setStatus('ready', detections.length === 0 ? 'Không phát hiện đối tượng nào' : `Phát hiện ${detections.length} đối tượng`);
+      } catch (err) {
+        console.error('Lỗi nhận diện:', err);
+        setStatus('error', `Lỗi: ${err.message}`);
+      } finally {
+        this.disabled = false;
+      }
+    });
 
     // ── Source Tabs ───────────────────────────────────────────────────────────
     document.getElementById('tab-image').addEventListener('click', () => switchTab('image'));
@@ -965,12 +689,8 @@
     }
 
     // ── Webcam ────────────────────────────────────────────────────────────────
-    let webcamStream = null;
-    let webcamRunning = false;
-    let webcamRafId = null;
-    let fpsFrameCount = 0;
-    let fpsLastTime = 0;
-    let currentFps = 0;
+    let webcamStream = null, webcamRunning = false, webcamRafId = null;
+    let fpsFrameCount = 0, fpsLastTime = 0, currentFps = 0;
 
     const video       = document.getElementById('webcam-video');
     const startBtn    = document.getElementById('webcam-start-btn');
@@ -988,9 +708,7 @@
         webcamStream = await navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480 } });
         video.srcObject = webcamStream;
         video.style.display = 'block';
-        startBtn.disabled = true;
-        detectWcBtn.disabled = false;
-        stopBtn.disabled = false;
+        startBtn.disabled = true; detectWcBtn.disabled = false; stopBtn.disabled = false;
         setStatus('ready', 'Webcam đã bật — nhấn "Bắt đầu nhận diện"');
       } catch (err) {
         setStatus('error', `Không thể truy cập webcam: ${err.message}`);
@@ -1005,71 +723,53 @@
         captureBtn.disabled = true;
         setStatus('ready', 'Đã dừng nhận diện webcam');
       } else {
-        if (!session) { setStatus('error', 'Chưa tải model'); return; }
-        webcamRunning = true;
-        fpsFrameCount = 0;
-        fpsLastTime = performance.now();
-        detectWcBtn.textContent = '⏸ Tạm dừng';
-        captureBtn.disabled = false;
+        if (!detector) { setStatus('error', 'Chưa tải model'); return; }
+        webcamRunning = true; fpsFrameCount = 0; fpsLastTime = performance.now();
+        detectWcBtn.textContent = '⏸ Tạm dừng'; captureBtn.disabled = false;
         webcamLoop();
       }
     }
 
     async function webcamLoop() {
       if (!webcamRunning) return;
-
       if (video.readyState >= 2) {
         const t0 = performance.now();
-
-        // Draw video frame to original canvas
         const origCanvas = document.getElementById('original-canvas');
         origCanvas.width  = video.videoWidth  || 640;
         origCanvas.height = video.videoHeight || 480;
         origCanvas.getContext('2d').drawImage(video, 0, 0);
 
-        // Preprocess from canvas (treat as image-like)
-        const preprocessResult = preprocessFromCanvas(origCanvas);
-        const detections = await runDetectionAuto(preprocessResult, 0.25, 0.45);
+        const pre = preprocessFromCanvas(origCanvas);
+        const detections = await runDetection(detector, currentModelEntry, pre);
         const elapsed = performance.now() - t0;
 
-        // Draw result
         const resultCanvas = document.getElementById('result-canvas');
-        resultCanvas.width  = origCanvas.width;
-        resultCanvas.height = origCanvas.height;
+        resultCanvas.width = origCanvas.width; resultCanvas.height = origCanvas.height;
         const ctx = resultCanvas.getContext('2d');
         ctx.drawImage(origCanvas, 0, 0);
-        drawDetectionsOnCtx(ctx, detections);
+        drawDetectionsOnCtx(ctx, detections, classes.length);
 
         renderTable(detections);
 
-        // FPS
         fpsFrameCount++;
         const now = performance.now();
         if (now - fpsLastTime >= 500) {
           currentFps = fpsFrameCount / ((now - fpsLastTime) / 1000);
-          fpsFrameCount = 0;
-          fpsLastTime = now;
+          fpsFrameCount = 0; fpsLastTime = now;
         }
         showTiming(elapsed, currentFps);
       }
-
       webcamRafId = requestAnimationFrame(webcamLoop);
     }
 
     function stopWebcam() {
       webcamRunning = false;
       if (webcamRafId) cancelAnimationFrame(webcamRafId);
-      if (webcamStream) {
-        webcamStream.getTracks().forEach(t => t.stop());
-        webcamStream = null;
-      }
-      video.srcObject = null;
-      video.style.display = 'none';
-      startBtn.disabled = false;
-      detectWcBtn.disabled = true;
+      if (webcamStream) { webcamStream.getTracks().forEach(t => t.stop()); webcamStream = null; }
+      video.srcObject = null; video.style.display = 'none';
+      startBtn.disabled = false; detectWcBtn.disabled = true;
       detectWcBtn.textContent = '⏯ Bắt đầu nhận diện';
-      captureBtn.disabled = true;
-      stopBtn.disabled = true;
+      captureBtn.disabled = true; stopBtn.disabled = true;
       setStatus('ready', 'Webcam đã tắt');
     }
 
@@ -1084,129 +784,51 @@
       }
     }
 
-    // Preprocess directly from a canvas element (no naturalWidth needed)
-    function preprocessFromCanvas(srcCanvas) {
-      const origW = srcCanvas.width;
-      const origH = srcCanvas.height;
-      const scale  = Math.min(MODEL_INPUT_SIZE / origW, MODEL_INPUT_SIZE / origH);
-      const scaledW = Math.min(Math.max(1, Math.round(origW * scale)), MODEL_INPUT_SIZE);
-      const scaledH = Math.min(Math.max(1, Math.round(origH * scale)), MODEL_INPUT_SIZE);
-      const padX = Math.floor((MODEL_INPUT_SIZE - scaledW) / 2);
-      const padY = Math.floor((MODEL_INPUT_SIZE - scaledH) / 2);
-
-      const offscreen = new OffscreenCanvas(MODEL_INPUT_SIZE, MODEL_INPUT_SIZE);
-      const ctx = offscreen.getContext('2d');
-      ctx.fillStyle = 'rgb(128,128,128)';
-      ctx.fillRect(0, 0, MODEL_INPUT_SIZE, MODEL_INPUT_SIZE);
-      ctx.drawImage(srcCanvas, padX, padY, scaledW, scaledH);
-
-      const pixels = ctx.getImageData(0, 0, MODEL_INPUT_SIZE, MODEL_INPUT_SIZE).data;
-      const numPixels = MODEL_INPUT_SIZE * MODEL_INPUT_SIZE;
-      const tensor = new Float32Array(3 * numPixels);
-      for (let i = 0; i < numPixels; i++) {
-        tensor[i]               = pixels[i * 4]     / 255;
-        tensor[numPixels + i]   = pixels[i * 4 + 1] / 255;
-        tensor[2 * numPixels + i] = pixels[i * 4 + 2] / 255;
-      }
-      return { tensor, scaleX: scaledW / origW, scaleY: scaledH / origH, padX, padY };
-    }
-
-    // Draw detections onto an existing ctx (used for webcam — canvas already has frame)
-    function drawDetectionsOnCtx(ctx, detections) {
-      ctx.lineWidth = 2;
-      ctx.font = 'bold 14px system-ui, sans-serif';
-      for (const det of detections) {
-        const { x, y, width, height } = det.box;
-        const color = getClassColor(det.classIndex, classes.length);
-        const label = `${det.className}: ${det.confidence.toFixed(2)}`;
-        ctx.strokeStyle = color;
-        ctx.strokeRect(x, y, width, height);
-        const tw = ctx.measureText(label).width + 6;
-        const th = 18;
-        const ly = y > th ? y - th : y + height;
-        ctx.fillStyle = color;
-        ctx.fillRect(x, ly, tw, th);
-        ctx.fillStyle = '#fff';
-        ctx.fillText(label, x + 3, ly + 13);
-      }
-    }
     // ── Magnifier ─────────────────────────────────────────────────────────────
     (function initMagnifier() {
-      const magnifier    = document.getElementById('magnifier');
-      const magCanvas    = document.getElementById('magnifier-canvas');
-      const magCtx       = magCanvas.getContext('2d');
-      const zoomSlider   = document.getElementById('zoom-slider');
-      const zoomValueEl  = document.getElementById('zoom-value');
-      const sizeSlider   = document.getElementById('size-slider');
-      const sizeValueEl  = document.getElementById('size-value');
+      const magnifier   = document.getElementById('magnifier');
+      const magCanvas   = document.getElementById('magnifier-canvas');
+      const magCtx      = magCanvas.getContext('2d');
+      const zoomSlider  = document.getElementById('zoom-slider');
+      const zoomValueEl = document.getElementById('zoom-value');
+      const sizeSlider  = document.getElementById('size-slider');
+      const sizeValueEl = document.getElementById('size-value');
 
       let zoomLevel = parseFloat(zoomSlider.value);
       let lensSize  = parseInt(sizeSlider.value, 10);
 
       function applyLensSize(size) {
-        magnifier.style.width  = size + 'px';
-        magnifier.style.height = size + 'px';
-        magCanvas.width  = size;
-        magCanvas.height = size;
+        magnifier.style.width = magnifier.style.height = size + 'px';
+        magCanvas.width = magCanvas.height = size;
       }
-
       applyLensSize(lensSize);
 
       zoomSlider.addEventListener('input', () => {
         zoomLevel = parseFloat(zoomSlider.value);
         zoomValueEl.textContent = `×${zoomLevel % 1 === 0 ? zoomLevel : zoomLevel.toFixed(1)}`;
       });
-
       sizeSlider.addEventListener('input', () => {
         lensSize = parseInt(sizeSlider.value, 10);
         sizeValueEl.textContent = lensSize + 'px';
         applyLensSize(lensSize);
       });
 
-      const targets = ['original-canvas', 'result-canvas', 'webcam-video'];
-
-      targets.forEach(id => {
-        const canvas = document.getElementById(id);
-
-        canvas.addEventListener('mouseenter', () => {
-          magnifier.style.display = 'block';
-          canvas.style.cursor = 'crosshair';
-        });
-
-        canvas.addEventListener('mouseleave', () => {
-          magnifier.style.display = 'none';
-          canvas.style.cursor = '';
-        });
-
-        canvas.addEventListener('mousemove', (e) => {
-          const rect   = canvas.getBoundingClientRect();
-          const elX = e.clientX - rect.left;
-          const elY = e.clientY - rect.top;
-
-          const scaleX = canvas.width  / rect.width;
-          const scaleY = canvas.height / rect.height;
-          const srcX   = elX * scaleX;
-          const srcY   = elY * scaleY;
-
-          const srcW = lensSize / zoomLevel;
-          const srcH = lensSize / zoomLevel;
-
+      ['original-canvas', 'result-canvas', 'webcam-video'].forEach(id => {
+        const el = document.getElementById(id);
+        el.addEventListener('mouseenter', () => { magnifier.style.display = 'block'; el.style.cursor = 'crosshair'; });
+        el.addEventListener('mouseleave', () => { magnifier.style.display = 'none'; el.style.cursor = ''; });
+        el.addEventListener('mousemove', (e) => {
+          const rect = el.getBoundingClientRect();
+          const srcX = (e.clientX - rect.left) * (el.width  / rect.width);
+          const srcY = (e.clientY - rect.top)  * (el.height / rect.height);
+          const srcW = lensSize / zoomLevel, srcH = lensSize / zoomLevel;
           magCtx.clearRect(0, 0, lensSize, lensSize);
-          magCtx.drawImage(
-            canvas,
-            srcX - srcW / 2, srcY - srcH / 2, srcW, srcH,
-            0, 0, lensSize, lensSize
-          );
-
+          magCtx.drawImage(el, srcX - srcW / 2, srcY - srcH / 2, srcW, srcH, 0, 0, lensSize, lensSize);
           const offset = 8;
-          let lensX = e.clientX + offset;
-          let lensY = e.clientY + offset;
-
-          if (lensX + lensSize > window.innerWidth)  lensX = e.clientX - lensSize - offset;
-          if (lensY + lensSize > window.innerHeight)  lensY = e.clientY - lensSize - offset;
-
-          magnifier.style.left = lensX + 'px';
-          magnifier.style.top  = lensY + 'px';
+          let lx = e.clientX + offset, ly = e.clientY + offset;
+          if (lx + lensSize > window.innerWidth)  lx = e.clientX - lensSize - offset;
+          if (ly + lensSize > window.innerHeight) ly = e.clientY - lensSize - offset;
+          magnifier.style.left = lx + 'px'; magnifier.style.top = ly + 'px';
         });
       });
     })();
