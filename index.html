@@ -510,7 +510,9 @@
   <!-- ONNX Runtime Web via CDN -->
   <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/ort.min.js"></script>
   <!-- App logic -->
-  <script>
+  <script type="module">
+    import { DetectorYolo   } from './DetectorYolo.js';
+    import { DetectorYolo26 } from './DetectorYolo26.js';
     // ── State ────────────────────────────────────────────────────────────────
     let session = null;
     let classes = [];
@@ -664,7 +666,6 @@
 
     // ── ImagePreprocessor ─────────────────────────────────────────────────────
     const MODEL_INPUT_SIZE = 640;
-    const PAD_VALUE = 128 / 255.0;  // gray padding normalized
 
     /**
      * Resize and letterbox-pad an image to 640×640, returning a Float32Array
@@ -722,256 +723,19 @@
       };
     }
 
-    // ── NMS ──────────────────────────────────────────────────────────────────
+    // ── Detector factory ──────────────────────────────────────────────────────
+
+    /** @type {DetectorYolo|DetectorYolo26|null} */
+    let detector = null;
 
     /**
-     * Compute Intersection over Union (IoU) between two bounding boxes.
-     * Boxes are in { x, y, width, height } format where (x, y) is top-left.
-     *
-     * @param {{ x: number, y: number, width: number, height: number }} boxA
-     * @param {{ x: number, y: number, width: number, height: number }} boxB
-     * @returns {number} IoU value in [0, 1]
+     * Auto-dispatch to the correct detector based on model type.
      */
-    function computeIoU(boxA, boxB) {
-      const xA1 = boxA.x, yA1 = boxA.y, xA2 = boxA.x + boxA.width,  yA2 = boxA.y + boxA.height;
-      const xB1 = boxB.x, yB1 = boxB.y, xB2 = boxB.x + boxB.width,  yB2 = boxB.y + boxB.height;
-
-      const interX1 = Math.max(xA1, xB1);
-      const interY1 = Math.max(yA1, yB1);
-      const interX2 = Math.min(xA2, xB2);
-      const interY2 = Math.min(yA2, yB2);
-
-      const interW = Math.max(0, interX2 - interX1);
-      const interH = Math.max(0, interY2 - interY1);
-      const intersection = interW * interH;
-
-      if (intersection === 0) return 0;
-
-      const areaA = boxA.width * boxA.height;
-      const areaB = boxB.width * boxB.height;
-      const union = areaA + areaB - intersection;
-
-      return union <= 0 ? 0 : intersection / union;
-    }
-
-    /**
-     * Apply Non-Maximum Suppression to a list of detections.
-     * Detections are sorted by confidence descending; boxes of the same class
-     * with IoU > iouThreshold are suppressed, keeping the highest-confidence box.
-     *
-     * @param {Array<{ classIndex: number, className: string, confidence: number, box: { x: number, y: number, width: number, height: number } }>} detections
-     * @param {number} iouThreshold  — typically 0.45
-     * @returns {Array} filtered detections
-     */
-    function applyNMS(detections, iouThreshold) {
-      // Sort by confidence descending
-      const sorted = detections.slice().sort((a, b) => b.confidence - a.confidence);
-
-      const kept = [];
-      const suppressed = new Uint8Array(sorted.length);
-
-      for (let i = 0; i < sorted.length; i++) {
-        if (suppressed[i]) continue;
-        kept.push(sorted[i]);
-        for (let j = i + 1; j < sorted.length; j++) {
-          if (suppressed[j]) continue;
-          if (sorted[i].classIndex !== sorted[j].classIndex) continue;
-          if (computeIoU(sorted[i].box, sorted[j].box) > iouThreshold) {
-            suppressed[j] = 1;
-          }
-        }
-      }
-
-      return kept;
-    }
-
-    /**
-     * Filter detections by confidence threshold.
-     * Only detections with confidence >= threshold are kept.
-     *
-     * @param {Array<{ classIndex: number, className: string, confidence: number, box: { x: number, y: number, width: number, height: number } }>} detections
-     * @param {number} [threshold=0.25]
-     * @returns {Array} filtered detections
-     */
-    function filterByConfidence(detections, threshold = 0.25) {
-      return detections.filter(d => d.confidence >= threshold);
-    }
-
-    // ── Detector ─────────────────────────────────────────────────────────────
-
-    /**
-     * Parse the raw YOLO output tensor of shape [1, 14, 8400].
-     * For each of the 8400 anchors, extracts cx, cy, w, h and 10 class scores,
-     * then computes confidence = max(classScores) and classIndex = argmax(classScores).
-     * Returns raw detections (before confidence filtering and NMS) with boxes
-     * expressed in 640×640 space.
-     *
-     * @param {Float32Array} outputData  — flat array of length 14 * 8400
-     * @param {string[]} classes         — array of class name strings
-     * @returns {Array<{ classIndex: number, className: string, confidence: number, box: { x: number, y: number, width: number, height: number } }>}
-     */
-    function parseOutputTensor(outputData, classes) {
-      const NUM_ANCHORS = 8400;
-      const detections = [];
-
-      for (let i = 0; i < NUM_ANCHORS; i++) {
-        const cx = outputData[0 * NUM_ANCHORS + i];
-        const cy = outputData[1 * NUM_ANCHORS + i];
-        const w  = outputData[2 * NUM_ANCHORS + i];
-        const h  = outputData[3 * NUM_ANCHORS + i];
-
-        let confidence = -Infinity;
-        let classIndex = 0;
-
-        for (let c = 0; c < classes.length; c++) {
-          const score = outputData[(4 + c) * NUM_ANCHORS + i];
-          if (score > confidence) {
-            confidence = score;
-            classIndex = c;
-          }
-        }
-
-        detections.push({
-          classIndex,
-          className: classes[classIndex],
-          confidence,
-          box: {
-            x: cx - w / 2,
-            y: cy - h / 2,
-            width: w,
-            height: h,
-          },
-        });
-      }
-
-      return detections;
-    }
-
-    /**
-     * Scale bounding box coordinates from 640×640 model space back to original
-     * image space, accounting for letterbox padding.
-     *
-     * @param {Array<{ classIndex: number, className: string, confidence: number, box: { x: number, y: number, width: number, height: number } }>} detections
-     * @param {number} scaleX  — scaledW / origW
-     * @param {number} scaleY  — scaledH / origH
-     * @param {number} padX    — horizontal padding (px in 640 space)
-     * @param {number} padY    — vertical padding (px in 640 space)
-     * @returns {Array} new array of detections with boxes in original image space
-     */
-    function scaleDetections(detections, scaleX, scaleY, padX, padY) {
-      return detections.map(det => {
-        const { x, y, width, height } = det.box;
-        return {
-          ...det,
-          box: {
-            x:      Math.max(0, (x - padX) / scaleX),
-            y:      Math.max(0, (y - padY) / scaleY),
-            width:  width  / scaleX,
-            height: height / scaleY,
-          },
-        };
-      });
-    }
-
-    /**
-     * Run full detection pipeline: preprocess result → inference → parse → filter → NMS → scale.
-     *
-     * @param {ort.InferenceSession} session
-     * @param {{ tensor: Float32Array, scaleX: number, scaleY: number, padX: number, padY: number }} preprocessResult
-     * @param {string[]} classes
-     * @param {number} confidenceThreshold  — e.g. 0.25
-     * @param {number} iouThreshold         — e.g. 0.45
-     * @returns {Promise<Array<{ classIndex: number, className: string, confidence: number, box: { x: number, y: number, width: number, height: number } }>>}
-     */
-    async function runDetection(session, preprocessResult, classes, confidenceThreshold, iouThreshold) {
-      const { tensor, scaleX, scaleY, padX, padY } = preprocessResult;
-
-      // 1. Create ORT tensor from Float32Array with shape [1, 3, 640, 640]
-      const ortTensor = new ort.Tensor('float32', tensor, [1, 3, 640, 640]);
-
-      // 2. Run inference
-      const results = await session.run({ images: ortTensor });
-
-      // 3. Get output data
-      const outputData = results[Object.keys(results)[0]].data;
-
-      // 4. Parse raw output tensor
-      const rawDetections = parseOutputTensor(outputData, classes);
-
-      // 5. Filter by confidence
-      const filtered = filterByConfidence(rawDetections, confidenceThreshold);
-
-      // 6. Apply NMS
-      const nmsResult = applyNMS(filtered, iouThreshold);
-
-      // 7. Scale boxes back to original image space
-      return scaleDetections(nmsResult, scaleX, scaleY, padX, padY);
-    }
-
-    // ── YOLO26 Detector (NMS-free: output [1, 300, 6] = [x1,y1,x2,y2,conf,cls] in 640 space) ──
-
-    /**
-     * Run detection for YOLO26 models exported via ultralytics (NMS-free format).
-     * Output: [1, 300, 6] where each row = [x1, y1, x2, y2, confidence, class_id]
-     * Coordinates are in 640×640 letterboxed space.
-     *
-     * @param {ort.InferenceSession} sess
-     * @param {{ tensor: Float32Array, scaleX: number, scaleY: number, padX: number, padY: number }} preprocessResult
-     * @param {string[]} classNames
-     * @param {number} confThreshold
-     * @returns {Promise<Array>}
-     */
-    async function runDetectionYolo26(sess, preprocessResult, classNames, confThreshold) {
-      const { tensor, scaleX, scaleY, padX, padY } = preprocessResult;
-
-      const ortTensor = new ort.Tensor('float32', tensor, [1, 3, 640, 640]);
-      const results = await sess.run({ images: ortTensor });
-      const data = results[Object.keys(results)[0]].data; // Float32Array [1*300*6]
-
-      const NUM_QUERIES = 300;
-      const detections = [];
-
-      for (let i = 0; i < NUM_QUERIES; i++) {
-        const offset = i * 6;
-        const x1   = data[offset];
-        const y1   = data[offset + 1];
-        const x2   = data[offset + 2];
-        const y2   = data[offset + 3];
-        const conf = data[offset + 4];
-        const cls  = Math.round(data[offset + 5]);
-
-        if (conf < confThreshold) continue;
-
-        // Scale from 640-letterbox space back to original image space
-        const origX1 = Math.max(0, (x1 - padX) / scaleX);
-        const origY1 = Math.max(0, (y1 - padY) / scaleY);
-        const origX2 = (x2 - padX) / scaleX;
-        const origY2 = (y2 - padY) / scaleY;
-
-        detections.push({
-          classIndex: cls,
-          className:  classNames[cls] ?? `class_${cls}`,
-          confidence: conf,
-          box: {
-            x:      origX1,
-            y:      origY1,
-            width:  origX2 - origX1,
-            height: origY2 - origY1,
-          },
-        });
-      }
-
-      return detections;
-    }
-
-    /**
-     * Auto-dispatch to the correct detection function based on model type.
-     */
-    async function runDetectionAuto(sess, preprocessResult, source, classNames, confThreshold, iouThreshold) {
-      if (currentModelEntry?.type === 'yolo26') {
-        return runDetectionYolo26(sess, preprocessResult, classNames, confThreshold);
-      }
-      return runDetection(sess, preprocessResult, classNames, confThreshold, iouThreshold);
+    async function runDetectionAuto(preprocessResult, confThreshold, iouThreshold) {
+      if (!detector) return [];
+      return currentModelEntry?.type === 'yolo26'
+        ? detector.runDetectionYolo26(preprocessResult, confThreshold)
+        : detector.runDetectionYolo26(preprocessResult, confThreshold, iouThreshold);
     }
 
     // ── Renderer ─────────────────────────────────────────────────────────────
@@ -1124,6 +888,9 @@
           loadClasses(entry.classesPath),
         ]);
         currentModelEntry = entry;
+        detector = entry.type === 'yolo26'
+          ? new DetectorYolo26(session, classes)
+          : new DetectorYolo(session, classes);
         setStatus('ready', `Sẵn sàng — ${entry.name} (${classes.length} class)`);
         detectBtn.disabled = false;
       } catch (err) {
@@ -1150,7 +917,7 @@
       try {
         const t0 = performance.now();
         const preprocessResult = preprocessImage(currentImage);
-        const detections = await runDetectionAuto(session, preprocessResult, currentImage, classes, 0.25, 0.45);
+        const detections = await runDetectionAuto(preprocessResult, 0.25, 0.45);
         const elapsed = performance.now() - t0;
 
         drawDetections(document.getElementById('result-canvas'), currentImage, detections, null);
@@ -1261,9 +1028,8 @@
         origCanvas.getContext('2d').drawImage(video, 0, 0);
 
         // Preprocess from canvas (treat as image-like)
-        const src = { naturalWidth: origCanvas.width, naturalHeight: origCanvas.height, _canvas: origCanvas };
         const preprocessResult = preprocessFromCanvas(origCanvas);
-        const detections = await runDetectionAuto(session, preprocessResult, origCanvas, classes, 0.25, 0.45);
+        const detections = await runDetectionAuto(preprocessResult, 0.25, 0.45);
         const elapsed = performance.now() - t0;
 
         // Draw result
@@ -1272,7 +1038,7 @@
         resultCanvas.height = origCanvas.height;
         const ctx = resultCanvas.getContext('2d');
         ctx.drawImage(origCanvas, 0, 0);
-        drawDetectionsOnCtx(ctx, detections, origCanvas.width, origCanvas.height);
+        drawDetectionsOnCtx(ctx, detections);
 
         renderTable(detections);
 
@@ -1346,7 +1112,7 @@
     }
 
     // Draw detections onto an existing ctx (used for webcam — canvas already has frame)
-    function drawDetectionsOnCtx(ctx, detections, imgW, imgH) {
+    function drawDetectionsOnCtx(ctx, detections) {
       ctx.lineWidth = 2;
       ctx.font = 'bold 14px system-ui, sans-serif';
       for (const det of detections) {
