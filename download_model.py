@@ -9,6 +9,7 @@ Example:
     python download_model.py https://example.com/best.pt my-model
 """
 
+import os
 import argparse
 import json
 import shutil
@@ -131,8 +132,11 @@ def main():
     classes_path = model_dir / "classes.txt"
 
     with tempfile.TemporaryDirectory() as tmp:
-        pt_path = Path(tmp) / "model.pt"
-        download_file(args.url, pt_path)
+        if os.path.exists(args.url):
+            pt_path = args.url
+        else:
+            pt_path = Path(tmp) / "model.pt"
+            download_file(args.url, pt_path)
         model = convert_to_onnx(pt_path, onnx_path)
 
     extract_classes(model, classes_path)
